@@ -22,6 +22,7 @@ from dinov2.utils.utils import CosineScheduler
 
 from dinov2.train.ssl_meta_arch import SSLMetaArch
 
+from dinov2.eval.metrics import AccuracyAveraging
 
 torch.backends.cuda.matmul.allow_tf32 = True  # PyTorch 1.12 sets this to False by default
 logger = logging.getLogger("dinov2")
@@ -129,6 +130,8 @@ def do_test(cfg, model, iteration):
         # save teacher checkpoint
         teacher_ckp_path = os.path.join(eval_dir, "teacher_checkpoint.pth")
         torch.save({"teacher": new_state_dict}, teacher_ckp_path)
+
+    return teacher_ckp_path
 
 
 def do_train(cfg, model, resume=False):
@@ -285,7 +288,53 @@ def do_train(cfg, model, resume=False):
         # checkpointing and testing
 
         if cfg.evaluation.eval_period_iterations > 0 and (iteration + 1) % cfg.evaluation.eval_period_iterations == 0:
-            do_test(cfg, model, f"training_{iteration}")
+            chkpt_path = do_test(cfg, model, f"training_{iteration}")
+
+            ############  KNN EVAL  ############
+            from dinov2.eval.knn import eval_knn
+            from dinov2.eval.setup import build_model_for_eval
+            from dinov2.data.transforms import make_classification_eval_transform
+            import json
+
+            # TODO: Temporary hardcode
+            eval_dataset_path = "ImageNet:split=VAL:root=/workspace/data/imagenet1k/imagenet1k:extra=/workspace/data/imagenet1k/imagenet1k"
+            eval_train_fraction = 0.8
+
+            # Make eval model and data
+            eval_model = build_model_for_eval(cfg, chkpt_path)
+            eval_transform = make_classification_eval_transform()
+
+            eval_dataset = make_dataset(
+                dataset_str=eval_dataset_path,
+                transform=eval_transform,
+            )
+            eval_train_size = int(len(eval_dataset) * eval_train_fraction)
+            eval_val_size = len(eval_dataset) - eval_train_size
+            eval_train_dataset, eval_val_dataset = torch.utils.data.random_split(
+                eval_dataset, [eval_train_size, eval_val_size]
+            )
+            
+            # Run eval
+            results_dict_knn = eval_knn(eval_model,eval_train_dataset,eval_val_dataset,accuracy_averaging=AccuracyAveraging.MEAN_ACCURACY,nb_knn=(10, 20, 100, 200),temperature=0.07,batch_size=256,num_workers=8,gather_on_cpu=False,)
+            metrics_file_path = os.path.join(cfg.train.output_dir, "eval", f"eval_results_{iteration}.json")
+            
+            results_dict = {}
+            if distributed.is_main_process():
+                for knn_ in results_dict_knn.keys():
+                    top1 = results_dict_knn[knn_]["top-1"].item() * 100.0
+                    top5 = results_dict_knn[knn_]["top-5"].item() * 100.0
+                    results_dict[f"{knn_} Top 1"] = top1
+                    results_dict[f"{knn_} Top 5"] = top5
+                    logger.info(f"{knn_} classifier result: Top1: {top1:.2f} Top5: {top5:.2f}")
+
+            with open(metrics_file_path, "a") as f:
+                for k, v in results_dict.items():
+                    f.write(json.dumps({k: v}) + "\n")
+
+            if distributed.is_enabled():
+                torch.distributed.barrier()
+            ############\ KNN EVAL \############
+
             torch.cuda.synchronize()
         periodic_checkpointer.step(iteration)
 
