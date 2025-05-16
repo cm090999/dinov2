@@ -16,6 +16,59 @@ from torch import nn
 
 logger = logging.getLogger("dinov2")
 
+def resize_pos_embed_if_needed(checkpoint_state_dict, model_state_dict):
+    """
+    Resize the positional embeddings in case they don't match.
+    
+    Args:
+        checkpoint_state_dict: The state_dict of the pretrained checkpoint
+        model_state_dict: The state_dict of the current model
+        
+    Returns:
+        checkpoint_state_dict: The updated state_dict with potentially resized position embeddings
+    """
+    if "pos_embed" in checkpoint_state_dict and "pos_embed" in model_state_dict:
+        pos_embed_checkpoint = checkpoint_state_dict["pos_embed"]
+        pos_embed_model = model_state_dict["pos_embed"]
+        
+        if pos_embed_checkpoint.shape != pos_embed_model.shape:
+            logger.info(f"Positional embeddings shape mismatch: {pos_embed_checkpoint.shape} vs {pos_embed_model.shape}")
+            
+            # Separate class and patch embeddings
+            if pos_embed_checkpoint.shape[1] > pos_embed_model.shape[1]:
+                # Usually the first token is the class token
+                class_token_checkpoint = pos_embed_checkpoint[:, 0:1, :]
+                patch_embed_checkpoint = pos_embed_checkpoint[:, 1:, :]
+                
+                class_token_model = pos_embed_model[:, 0:1, :]
+                patch_embed_model = pos_embed_model[:, 1:, :]
+                
+                # Interpolate patch embeddings
+                patch_height_checkpoint = patch_width_checkpoint = int(patch_embed_checkpoint.shape[1] ** 0.5)
+                patch_height_model = patch_width_model = int(patch_embed_model.shape[1] ** 0.5)
+                
+                patch_embed_checkpoint = patch_embed_checkpoint.reshape(
+                    1, patch_height_checkpoint, patch_width_checkpoint, pos_embed_checkpoint.shape[2]
+                ).permute(0, 3, 1, 2)
+                
+                patch_embed_model_resized = torch.nn.functional.interpolate(
+                    patch_embed_checkpoint,
+                    size=(patch_height_model, patch_width_model),
+                    mode='bicubic',
+                    align_corners=False
+                )
+                
+                patch_embed_model_resized = patch_embed_model_resized.permute(0, 2, 3, 1).flatten(1, 2)
+                
+                # Combine class token with resized patch embeddings
+                pos_embed_model_resized = torch.cat((class_token_checkpoint, patch_embed_model_resized), dim=1)
+                
+                # Replace checkpoint value with resized version
+                checkpoint_state_dict["pos_embed"] = pos_embed_model_resized
+                logger.info(f"Positional embeddings successfully resized to {pos_embed_model_resized.shape}")
+    
+    return checkpoint_state_dict
+
 
 def load_pretrained_weights(model, pretrained_weights, checkpoint_key):
     if urlparse(pretrained_weights).scheme:  # If it looks like an URL
@@ -29,6 +82,9 @@ def load_pretrained_weights(model, pretrained_weights, checkpoint_key):
     state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
     # remove `backbone.` prefix induced by multicrop wrapper
     state_dict = {k.replace("backbone.", ""): v for k, v in state_dict.items()}
+    # resize pos_embed if needed
+    state_dict = resize_pos_embed_if_needed(state_dict, model.state_dict())
+    # load state dict
     msg = model.load_state_dict(state_dict, strict=False)
     logger.info("Pretrained weights found at {} and loaded with msg: {}".format(pretrained_weights, msg))
 
