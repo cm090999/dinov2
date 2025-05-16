@@ -3,24 +3,28 @@
 # Docker
 Build the image
 ```bash
-docker-compose build
+docker compose build
 ```
 Start the container
 ```bash
-docker-compose up
+docker compose up
 ```
 Or start it in detached mode:
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 And attach a shell
 ```bash
-docker-compose exec dinov2 bash
+docker compose exec dinov2 bash
+```
+To stop the container
+```bash
+docker compose stop
 ```
 
 Test imagenet locally:
 ```bash
-python dinov2/run/train/train.py --nodes 1 --config-file dinov2/configs/train/vits16_short.yaml --output-dir testimagenet train.dataset_path=ImageNet:split=TRAIN:root=/workspace/data/imagenet1k/imagenet1k:extra=/workspace/data/imagenet1k/imagenet1k
+python dinov2/run/train/train.py --nodes 1 --config-file dinov2/configs/train/vits14.yaml --output-dir testimagenet train.dataset_path=ImageNet:split=TRAIN:root=/workspace/data/imagenet1k/imagenet1k:extra=/workspace/data/imagenet1k/imagenet1k
 ```
 
 
