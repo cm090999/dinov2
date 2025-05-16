@@ -1,5 +1,29 @@
 :new: [2023-10-26] *Added DINOv2 backbones with registers, following [Vision Transformers Need Registers](https://arxiv.org/abs/2309.16588).*
 
+# Docker
+Build the image
+```bash
+docker-compose build
+```
+Start the container
+```bash
+docker-compose up
+```
+Or start it in detached mode:
+```bash
+docker-compose up -d
+```
+And attach a shell
+```bash
+docker-compose exec dinov2 bash
+```
+
+Test imagenet locally:
+```bash
+python dinov2/run/train/train.py --nodes 1 --config-file dinov2/configs/train/vits16_short.yaml --output-dir testimagenet train.dataset_path=ImageNet:split=TRAIN:root=/workspace/data/imagenet1k/imagenet1k:extra=/workspace/data/imagenet1k/imagenet1k
+```
+
+
 # DINOv2: Learning Robust Visual Features without Supervision
 
 **[Meta AI Research, FAIR](https://ai.facebook.com/research/)**

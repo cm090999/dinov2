@@ -1,0 +1,23 @@
+services:
+  dinov2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dinov2:latest
+    container_name: dinov2
+    shm_size: 12gb
+    volumes:
+      - .:/workspace/dinov2
+      - /mnt/nvme2:/workspace/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # Default command can be overridden when starting the container
+    command: bash
+    # For interactive use
+    stdin_open: true
+    tty: true
