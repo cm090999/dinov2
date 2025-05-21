@@ -6,8 +6,10 @@ ibot:
   head_n_prototypes: 131072
 train:
   batch_size_per_gpu: 8
+  accumulation_steps: 128 # 256 --> 2048 batch size
   dataset_path: ImageNet:split=TRAIN
   centering: sinkhorn_knopp
+  OFFICIAL_EPOCH_LENGTH: 10
 student:
   arch: vit_small
   patch_size: 14
@@ -17,10 +19,14 @@ student:
 teacher:
   momentum_teacher: 0.994
 optim:
-  epochs: 500
+  epochs: 50
   weight_decay_end: 0.2
   base_lr: 2.0e-04  # learning rate for a batch size of 1024
-  warmup_epochs: 80
+  warmup_epochs: 10
   layerwise_decay: 1.0
 crops:
   local_crops_size: 98
+evaluation:
+  eval_period_iterations: 100 # every 10 steps (not iterations)
+  eval_dataset: ImageNet:split=VAL:root=/workspace/data/imagenet1k/imagenet1k:extra=/workspace/data/imagenet1k/imagenet1k
+  train_fraction: 0.8
