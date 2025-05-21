@@ -11,6 +11,7 @@ from functools import partial
 
 from fvcore.common.checkpoint import PeriodicCheckpointer
 import torch
+import aim
 
 from dinov2.data import SamplerType, make_data_loader, make_dataset
 from dinov2.data import collate_data_and_cast, DataAugmentationDINO, MaskingGenerator
@@ -26,6 +27,56 @@ from dinov2.eval.metrics import AccuracyAveraging
 
 torch.backends.cuda.matmul.allow_tf32 = True  # PyTorch 1.12 sets this to False by default
 logger = logging.getLogger("dinov2")
+
+def periodic_eval(model, cfg, iteration, step, aim_run=None):
+
+    chkpt_path = do_test(cfg, model, f"training_iteration_{iteration}_step_{step}")
+
+    ############  KNN EVAL  ############
+    from dinov2.eval.knn import eval_knn
+    from dinov2.eval.setup import build_model_for_eval
+    from dinov2.data.transforms import make_classification_eval_transform
+    import json
+
+    # Make eval model and data
+    eval_model = build_model_for_eval(cfg, chkpt_path)
+    eval_transform = make_classification_eval_transform()
+
+    eval_dataset = make_dataset(
+        dataset_str=cfg.evaluation.eval_dataset,
+        transform=eval_transform,
+    )
+    eval_train_size = int(len(eval_dataset) * cfg.evaluation.train_fraction)
+    eval_val_size = len(eval_dataset) - eval_train_size
+    eval_train_dataset, eval_val_dataset = torch.utils.data.random_split(
+        eval_dataset, [eval_train_size, eval_val_size]
+    )
+    
+    # Run eval
+    results_dict_knn = eval_knn(eval_model,eval_train_dataset,eval_val_dataset,accuracy_averaging=AccuracyAveraging.MEAN_ACCURACY,nb_knn=(10, 20, 100, 200),temperature=0.07,batch_size=256,num_workers=8,gather_on_cpu=False,)
+    metrics_file_path = os.path.join(cfg.train.output_dir, "eval", f"eval_results_iteration_{iteration}_step_{step}.json")
+    
+    results_dict = {}
+    if distributed.is_main_process():
+        for neighbor in results_dict_knn.keys():
+            for topx in results_dict_knn[neighbor].keys():
+                neighbor_name = neighbor[1]
+                log_name = f"knn_neighbors_{neighbor_name}_top_{topx}"
+                result_value = results_dict_knn[neighbor][topx].item()
+                if aim_run:
+                    aim_run.track(result_value, name=f'eval/{log_name}', step=step, context={"subset": "eval"})
+
+    with open(metrics_file_path, "a") as f:
+        for k, v in results_dict.items():
+            f.write(json.dumps({k: v}) + "\n")
+            if aim_run and distributed.is_main_process(): # Also log to aim here
+                aim_run.track(v, name=f'eval/{k}', step=step, context={"subset": "eval"})
+
+    if distributed.is_enabled():
+        torch.distributed.barrier()
+    ############\ KNN EVAL \############
+
+    torch.cuda.synchronize()
 
 
 def get_args_parser(add_help: bool = True):
@@ -134,7 +185,7 @@ def do_test(cfg, model, iteration):
     return teacher_ckp_path
 
 
-def do_train(cfg, model, resume=False):
+def do_train(cfg, model, resume=False, aim_run=None):
     model.train()
     inputs_dtype = torch.half
     fp16_scaler = model.fp16_scaler  # for mixed precision training
@@ -214,59 +265,70 @@ def do_train(cfg, model, resume=False):
     )
 
     # training loop
-
+    accumulation_steps = cfg.train.accumulation_steps
     iteration = start_iter
+    step = 0 # TODO: Not considering start_iter for now
+    last_eval_step = 0
 
     logger.info("Starting training from iteration {}".format(start_iter))
     metrics_file = os.path.join(cfg.train.output_dir, "training_metrics.json")
-    metric_logger = MetricLogger(delimiter="  ", output_file=metrics_file)
+    metric_logger = MetricLogger(delimiter="  ", output_file=metrics_file, aim_run=aim_run) # Pass aim_run to MetricLogger
     header = "Training"
 
     for data in metric_logger.log_every(
         data_loader,
-        10,
+        10 * accumulation_steps,
         header,
-        max_iter,
+        max_iter * accumulation_steps,
         start_iter,
     ):
+        metric_logger.current_step = step  # Set current_step for the logger
+        
+        # First iteration eval
+        if cfg.evaluation.eval_period_iterations > 0 and iteration == 0:
+            periodic_eval(model, cfg, iteration, step, aim_run=aim_run)
+            last_eval_step = step
+
         current_batch_size = data["collated_global_crops"].shape[0] / 2
-        if iteration > max_iter:
+        if step > max_iter:
             return
 
         # apply schedules
-
-        lr = lr_schedule[iteration]
-        wd = wd_schedule[iteration]
-        mom = momentum_schedule[iteration]
-        teacher_temp = teacher_temp_schedule[iteration]
-        last_layer_lr = last_layer_lr_schedule[iteration]
+        lr = lr_schedule[step]
+        wd = wd_schedule[step]
+        mom = momentum_schedule[step]
+        teacher_temp = teacher_temp_schedule[step]
+        last_layer_lr = last_layer_lr_schedule[step]
         apply_optim_scheduler(optimizer, lr, wd, last_layer_lr)
 
-        # compute losses
+        # compute losses and accumulate gradients
+        loss_dict = model.forward_backward(data, teacher_temp=teacher_temp, accumulation_steps=accumulation_steps)
 
-        optimizer.zero_grad(set_to_none=True)
-        loss_dict = model.forward_backward(data, teacher_temp=teacher_temp)
+        # clip gradients, optimizer step, scaler update, and teacher EMA update
+        # are performed only every accumulation_steps
+        if (iteration + 1) % accumulation_steps == 0:
+            if fp16_scaler is not None:
+                if cfg.optim.clip_grad:
+                    fp16_scaler.unscale_(optimizer)
+                    for v in model.student.values():
+                        v.clip_grad_norm_(cfg.optim.clip_grad)
+                fp16_scaler.step(optimizer)
+                fp16_scaler.update()
+            else:
+                if cfg.optim.clip_grad:
+                    for v in model.student.values():
+                        v.clip_grad_norm_(cfg.optim.clip_grad)
+                optimizer.step()
+            step += 1  # Increment step after successful optimizer step
 
-        # clip gradients
+            # perform teacher EMA update
+            model.update_teacher(mom)
 
-        if fp16_scaler is not None:
-            if cfg.optim.clip_grad:
-                fp16_scaler.unscale_(optimizer)
-                for v in model.student.values():
-                    v.clip_grad_norm_(cfg.optim.clip_grad)
-            fp16_scaler.step(optimizer)
-            fp16_scaler.update()
-        else:
-            if cfg.optim.clip_grad:
-                for v in model.student.values():
-                    v.clip_grad_norm_(cfg.optim.clip_grad)
-            optimizer.step()
-
-        # perform teacher EMA update
-
-        model.update_teacher(mom)
+            # Zero gradients for the next accumulation cycle
+            optimizer.zero_grad(set_to_none=True)
 
         # logging
+        metric_logger.current_step = step  # Update step in logger before logging metrics for the iteration
 
         if distributed.get_global_size() > 1:
             for v in loss_dict.values():
@@ -286,65 +348,33 @@ def do_train(cfg, model, resume=False):
         metric_logger.update(total_loss=losses_reduced, **loss_dict_reduced)
 
         # checkpointing and testing
+        if cfg.evaluation.eval_period_iterations > 0 and (step + 1) % cfg.evaluation.eval_period_iterations == 0:
+            if last_eval_step == step:
+                pass
+            else:
+                periodic_eval(model, cfg, iteration, step, aim_run=aim_run)
+                last_eval_step = step
 
-        if cfg.evaluation.eval_period_iterations > 0 and (iteration + 1) % cfg.evaluation.eval_period_iterations == 0:
-            chkpt_path = do_test(cfg, model, f"training_{iteration}")
-
-            ############  KNN EVAL  ############
-            from dinov2.eval.knn import eval_knn
-            from dinov2.eval.setup import build_model_for_eval
-            from dinov2.data.transforms import make_classification_eval_transform
-            import json
-
-            # TODO: Temporary hardcode
-            eval_dataset_path = "ImageNet:split=VAL:root=/workspace/data/imagenet1k/imagenet1k:extra=/workspace/data/imagenet1k/imagenet1k"
-            eval_train_fraction = 0.8
-
-            # Make eval model and data
-            eval_model = build_model_for_eval(cfg, chkpt_path)
-            eval_transform = make_classification_eval_transform()
-
-            eval_dataset = make_dataset(
-                dataset_str=eval_dataset_path,
-                transform=eval_transform,
-            )
-            eval_train_size = int(len(eval_dataset) * eval_train_fraction)
-            eval_val_size = len(eval_dataset) - eval_train_size
-            eval_train_dataset, eval_val_dataset = torch.utils.data.random_split(
-                eval_dataset, [eval_train_size, eval_val_size]
-            )
-            
-            # Run eval
-            results_dict_knn = eval_knn(eval_model,eval_train_dataset,eval_val_dataset,accuracy_averaging=AccuracyAveraging.MEAN_ACCURACY,nb_knn=(10, 20, 100, 200),temperature=0.07,batch_size=256,num_workers=8,gather_on_cpu=False,)
-            metrics_file_path = os.path.join(cfg.train.output_dir, "eval", f"eval_results_{iteration}.json")
-            
-            results_dict = {}
-            if distributed.is_main_process():
-                for knn_ in results_dict_knn.keys():
-                    top1 = results_dict_knn[knn_]["top-1"].item() * 100.0
-                    top5 = results_dict_knn[knn_]["top-5"].item() * 100.0
-                    results_dict[f"{knn_} Top 1"] = top1
-                    results_dict[f"{knn_} Top 5"] = top5
-                    logger.info(f"{knn_} classifier result: Top1: {top1:.2f} Top5: {top5:.2f}")
-
-            with open(metrics_file_path, "a") as f:
-                for k, v in results_dict.items():
-                    f.write(json.dumps({k: v}) + "\n")
-
-            if distributed.is_enabled():
-                torch.distributed.barrier()
-            ############\ KNN EVAL \############
-
-            torch.cuda.synchronize()
-        periodic_checkpointer.step(iteration)
+        periodic_checkpointer.step(step)
 
         iteration = iteration + 1
     metric_logger.synchronize_between_processes()
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
-
 def main(args):
     cfg = setup(args)
+
+    # Initialize Aim run
+    if distributed.is_main_process():
+        repo_dir = os.path.join(cfg.train.output_dir, ".aim_repo")
+        if not os.path.exists(repo_dir):
+            os.makedirs(repo_dir)
+        aim_run = aim.Run(experiment="dinov2_training",
+                          repo=repo_dir,
+                          )
+        aim_run['hparams'] = cfg
+    else:
+        aim_run = None
 
     model = SSLMetaArch(cfg).to(torch.device("cuda"))
     model.prepare_for_distributed_training()
@@ -357,9 +387,10 @@ def main(args):
             .get("iteration", -1)
             + 1
         )
+        periodic_eval(model, cfg, 0, 0, aim_run=aim_run)
         return do_test(cfg, model, f"manual_{iteration}")
 
-    do_train(cfg, model, resume=not args.no_resume)
+    do_train(cfg, model, resume=not args.no_resume, aim_run=aim_run)
 
 
 if __name__ == "__main__":

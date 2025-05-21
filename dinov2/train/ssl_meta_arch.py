@@ -137,7 +137,7 @@ class SSLMetaArch(nn.Module):
         else:
             loss.backward()
 
-    def forward_backward(self, images, teacher_temp):
+    def forward_backward(self, images, teacher_temp, accumulation_steps=1):
         n_global_crops = 2
         assert n_global_crops == 2
         n_local_crops = self.cfg.crops.local_crops_number
@@ -347,7 +347,9 @@ class SSLMetaArch(nn.Module):
             # accumulate loss
             loss_accumulator += self.ibot_loss_weight * ibot_patch_loss
 
-        self.backprop_loss(loss_accumulator)
+        # Scale the accumulated loss for this micro-batch before backpropagation
+        scaled_loss_for_backward = loss_accumulator / accumulation_steps
+        self.backprop_loss(scaled_loss_for_backward)
 
         self.fsdp_synchronize_streams()
 

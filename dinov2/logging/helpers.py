@@ -10,6 +10,7 @@ import logging
 import time
 
 import torch
+import aim
 
 import dinov2.distributed as distributed
 
@@ -18,10 +19,12 @@ logger = logging.getLogger("dinov2")
 
 
 class MetricLogger(object):
-    def __init__(self, delimiter="\t", output_file=None):
+    def __init__(self, delimiter="\t", output_file=None, aim_run=None):  # Add aim_run parameter
         self.meters = defaultdict(SmoothedValue)
         self.delimiter = delimiter
         self.output_file = output_file
+        self.current_step = 0
+        self.aim_run = aim_run  # Store the aim run
 
     def update(self, **kwargs):
         for k, v in kwargs.items():
@@ -29,6 +32,8 @@ class MetricLogger(object):
                 v = v.item()
             assert isinstance(v, (float, int))
             self.meters[k].update(v)
+            if self.aim_run:  # Log to Aim if a run is active
+                self.aim_run.track(v, name=k, step=self.current_step)
 
     def __getattr__(self, attr):
         if attr in self.meters:
@@ -50,7 +55,7 @@ class MetricLogger(object):
     def add_meter(self, name, meter):
         self.meters[name] = meter
 
-    def dump_in_output_file(self, iteration, iter_time, data_time):
+    def dump_in_output_file(self, iteration, iter_time, data_time, step=None):  # Added step
         if self.output_file is None or not distributed.is_main_process():
             return
         dict_to_dump = dict(
@@ -58,7 +63,17 @@ class MetricLogger(object):
             iter_time=iter_time,
             data_time=data_time,
         )
+        if step is not None:  # Added step
+            dict_to_dump["step"] = step  # Added step
         dict_to_dump.update({k: v.median for k, v in self.meters.items()})
+        # Also log to Aim here if a run is active and it's the main process
+        if self.aim_run and distributed.is_main_process() and step is not None:
+            for key, value in dict_to_dump.items():
+                if key not in ['iteration', 'step']:  # Avoid logging iteration and step as separate metrics if already tracked
+                    self.aim_run.track(value, name=f'eval/{key}', step=step, context={"subset": "eval_dump"})
+            self.aim_run.track(iter_time, name='iter_time', step=step, context={"subset": "eval_dump"})
+            self.aim_run.track(data_time, name='data_time', step=step, context={"subset": "eval_dump"})
+
         with open(self.output_file, "a") as f:
             f.write(json.dumps(dict_to_dump) + "\n")
         pass
@@ -80,6 +95,7 @@ class MetricLogger(object):
         log_list = [
             header,
             "[{0" + space_fmt + "}/{1}]",
+            "step: {step}",  # Added step
             "eta: {eta}",
             "{meters}",
             "time: {time}",
@@ -95,7 +111,16 @@ class MetricLogger(object):
             yield obj
             iter_time.update(time.time() - end)
             if i % print_freq == 0 or i == n_iterations - 1:
-                self.dump_in_output_file(iteration=i, iter_time=iter_time.avg, data_time=data_time.avg)
+                self.dump_in_output_file(iteration=i, iter_time=iter_time.avg, data_time=data_time.avg, step=self.current_step)  # Pass current_step
+                # Log to Aim in log_every as well
+                if self.aim_run and distributed.is_main_process():
+                    for name, meter in self.meters.items():
+                        self.aim_run.track(meter.median, name=f'train/{name}_median', step=self.current_step)
+                        self.aim_run.track(meter.avg, name=f'train/{name}_avg', step=self.current_step)
+                        self.aim_run.track(meter.global_avg, name=f'train/{name}_global_avg', step=self.current_step)
+                    self.aim_run.track(iter_time.avg, name='train/iter_time_avg', step=self.current_step)
+                    self.aim_run.track(data_time.avg, name='train/data_time_avg', step=self.current_step)
+
                 eta_seconds = iter_time.global_avg * (n_iterations - i)
                 eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
                 if torch.cuda.is_available():
@@ -103,6 +128,7 @@ class MetricLogger(object):
                         log_msg.format(
                             i,
                             n_iterations,
+                            step=self.current_step,  # Use current_step
                             eta=eta_string,
                             meters=str(self),
                             time=str(iter_time),
@@ -115,6 +141,7 @@ class MetricLogger(object):
                         log_msg.format(
                             i,
                             n_iterations,
+                            step=self.current_step,  # Use current_step
                             eta=eta_string,
                             meters=str(self),
                             time=str(iter_time),
