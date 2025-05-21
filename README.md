@@ -22,10 +22,16 @@ To stop the container
 docker compose stop
 ```
 
-Test imagenet locally:
+Test imagenet locally with submitit (slurm):
 ```bash
 python dinov2/run/train/train.py --nodes 1 --config-file dinov2/configs/train/vits14.yaml --output-dir testimagenet train.dataset_path=ImageNet:split=TRAIN:root=/workspace/data/imagenet1k/imagenet1k:extra=/workspace/data/imagenet1k/imagenet1k
 ```
+
+Test imagenet locally:
+```bash
+python dinov2/train/train.py --config-file dinov2/configs/train/vits14.yaml --output-dir testimagenet train.dataset_path=ImageNet:split=TRAIN:root=/workspace/data/imagenet1k/imagenet1k:extra=/workspace/data/imagenet1k/imagenet1k
+```
+
 
 
 # DINOv2: Learning Robust Visual Features without Supervision
