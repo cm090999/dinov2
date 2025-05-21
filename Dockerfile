@@ -34,7 +34,7 @@ RUN conda install -y python=3.9 pip && \
 
 # Set up Python environment
 RUN pip install torch==2.0.0 torchvision==0.15.0 --index-url https://download.pytorch.org/whl/cu117 && \
-    pip install omegaconf torchmetrics==0.10.3 fvcore iopath && \
+    pip install omegaconf torchmetrics==0.10.3 fvcore iopath aim && \
     pip install git+https://github.com/facebookincubator/submitit && \
     pip install --extra-index-url https://pypi.nvidia.com cuml-cu11 && \
     pip install xformers==0.0.18
