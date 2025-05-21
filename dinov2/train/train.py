@@ -269,6 +269,7 @@ def do_train(cfg, model, resume=False, aim_run=None):
     iteration = start_iter
     step = 0 # TODO: Not considering start_iter for now
     last_eval_step = 0
+    last_checkpointer_step = 0
 
     logger.info("Starting training from iteration {}".format(start_iter))
     metrics_file = os.path.join(cfg.train.output_dir, "training_metrics.json")
@@ -355,7 +356,9 @@ def do_train(cfg, model, resume=False, aim_run=None):
                 periodic_eval(model, cfg, iteration, step, aim_run=aim_run)
                 last_eval_step = step
 
-        periodic_checkpointer.step(step)
+        if step > last_checkpointer_step:
+            periodic_checkpointer.step(step)
+            last_checkpointer_step = step
 
         iteration = iteration + 1
     metric_logger.synchronize_between_processes()
