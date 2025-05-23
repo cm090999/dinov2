@@ -14,8 +14,9 @@ student:
   arch: vit_small
   patch_size: 14
   drop_path_rate: 0.4
-  ffn_layer: swiglufused
+  ffn_layer: mlp
   block_chunks: 0
+  pretrained_weights: 'https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth' # '' # 'https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth'
 teacher:
   momentum_teacher: 0.994
 optim:
@@ -30,3 +31,7 @@ evaluation:
   eval_period_iterations: 100 # every 10 steps (not iterations)
   eval_dataset: ImageNet:split=VAL:root=/workspace/data/imagenet1k/imagenet1k:extra=/workspace/data/imagenet1k/imagenet1k
   train_fraction: 0.8
+block_expansion:
+  enabled: True
+  expanded_blocks: [3, 7, 11] #[] #[3, 7, 11]
+  path_dropout: 0.3
