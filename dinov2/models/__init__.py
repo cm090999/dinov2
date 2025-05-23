@@ -7,11 +7,13 @@ import logging
 
 from . import vision_transformer as vits
 
+from dinov2.models.block_expansion import expand_dinov2
+
 
 logger = logging.getLogger("dinov2")
 
 
-def build_model(args, only_teacher=False, img_size=224):
+def build_model(args, only_teacher=False, img_size=224, cfg=None, expand=False):
     args.arch = args.arch.removesuffix("_memeff")
     if "vit" in args.arch:
         vit_kwargs = dict(
@@ -28,16 +30,22 @@ def build_model(args, only_teacher=False, img_size=224):
             interpolate_antialias=args.interpolate_antialias,
         )
         teacher = vits.__dict__[args.arch](**vit_kwargs)
-        if only_teacher:
-            return teacher, teacher.embed_dim
         student = vits.__dict__[args.arch](
             **vit_kwargs,
             drop_path_rate=args.drop_path_rate,
             drop_path_uniform=args.drop_path_uniform,
         )
         embed_dim = student.embed_dim
+
+    if expand:
+        if cfg.block_expansion.enabled:
+            student = expand_dinov2(student, cfg.block_expansion.expanded_blocks, cfg.block_expansion.path_dropout)
+            teacher = expand_dinov2(teacher, cfg.block_expansion.expanded_blocks, cfg.block_expansion.path_dropout)
+    if only_teacher:
+        return teacher, teacher.embed_dim
+
     return student, teacher, embed_dim
 
 
-def build_model_from_cfg(cfg, only_teacher=False):
-    return build_model(cfg.student, only_teacher=only_teacher, img_size=cfg.crops.global_crops_size)
+def build_model_from_cfg(cfg, only_teacher=False, expand=False):
+    return build_model(cfg.student, only_teacher=only_teacher, img_size=cfg.crops.global_crops_size, cfg=cfg, expand=expand)

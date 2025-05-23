@@ -16,8 +16,9 @@ from dinov2.utils.utils import has_batchnorms, load_pretrained_weights
 from dinov2.utils.param_groups import get_params_groups_with_decay, fuse_params_groups
 from dinov2.fsdp import get_fsdp_wrapper, ShardedGradScaler, get_fsdp_modules, reshard_fsdp_model
 
-from dinov2.models.vision_transformer import BlockChunk
-
+from dinov2.models.vision_transformer import BlockChunk, DinoVisionTransformer, Block
+from dinov2.models.block_expansion import expand_dinov2
+from dinov2.models.block_expansion import get_expanded_block_positions
 
 try:
     from xformers.ops import fmha
@@ -54,6 +55,12 @@ class SSLMetaArch(nn.Module):
             
             # # Load state dict with potential resized pos_embed
             # student_backbone.load_state_dict(chkpt["model"], strict=False)
+
+        # Block expansion
+        if cfg.block_expansion.enabled:
+            logger.info("OPTIONS -- block expansion ENABLED")
+            student_model_dict["backbone"] = expand_dinov2(student_model_dict["backbone"], cfg.block_expansion.expanded_blocks, cfg.block_expansion.path_dropout)
+            teacher_model_dict["backbone"] = expand_dinov2(teacher_model_dict["backbone"], cfg.block_expansion.expanded_blocks, cfg.block_expansion.path_dropout)
 
         self.embed_dim = embed_dim
         self.dino_out_dim = cfg.dino.head_n_prototypes
@@ -126,6 +133,16 @@ class SSLMetaArch(nn.Module):
         # there is no backpropagation through the teacher, so no need for gradients
         for p in self.teacher.parameters():
             p.requires_grad = False
+
+        if cfg.block_expansion.enabled:
+            logger.info(f"OPTIONS -- block expansion: expanded blocks: {cfg.block_expansion.expanded_blocks}, fix weights of original blocks")
+            block_positions = get_expanded_block_positions(cfg.block_expansion.expanded_blocks)
+            for p in self.student.backbone.blocks.parameters():
+                p.requires_grad = False
+            for pos in block_positions:
+                for p in self.student.backbone.blocks[pos].parameters():
+                    p.requires_grad = True
+
         logger.info(f"Student and Teacher are built: they are both {cfg.student.arch} network.")
 
     def forward(self, inputs):
@@ -405,6 +422,6 @@ class SSLMetaArch(nn.Module):
         for k, v in self.student.items():
             self.teacher[k].load_state_dict(self.student[k].state_dict())
             student_model_cfg = self.cfg.compute_precision.student[k]
-            self.student[k] = get_fsdp_wrapper(student_model_cfg, modules_to_wrap={BlockChunk})(self.student[k])
+            self.student[k] = get_fsdp_wrapper(student_model_cfg, modules_to_wrap={Block})(self.student[k])
             teacher_model_cfg = self.cfg.compute_precision.teacher[k]
-            self.teacher[k] = get_fsdp_wrapper(teacher_model_cfg, modules_to_wrap={BlockChunk})(self.teacher[k])
+            self.teacher[k] = get_fsdp_wrapper(teacher_model_cfg, modules_to_wrap={Block})(self.teacher[k])
