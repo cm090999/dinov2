@@ -29,7 +29,7 @@ crops:
   local_crops_size: 98
 evaluation:
   eval_period_iterations: 100 # every 10 steps (not iterations)
-  eval_dataset: ImageNet:split=VAL:root=/workspace/data/imagenet1k/imagenet1k:extra=/workspace/data/imagenet1k/imagenet1k
+  eval_dataset: ImageNet:split=VAL:root=/workspace/data_gh/imagenet1k:extra=/workspace/data_gh/imagenet1k
   train_fraction: 0.8
 block_expansion:
   enabled: True
