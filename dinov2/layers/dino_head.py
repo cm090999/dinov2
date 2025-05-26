@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 from torch.nn.init import trunc_normal_
 from torch.nn.utils import weight_norm
+from torch.nn.utils.parametrizations import weight_norm as weight_norm_v2
 
 
 class DINOHead(nn.Module):
@@ -24,8 +25,8 @@ class DINOHead(nn.Module):
         nlayers = max(nlayers, 1)
         self.mlp = _build_mlp(nlayers, in_dim, bottleneck_dim, hidden_dim=hidden_dim, use_bn=use_bn, bias=mlp_bias)
         self.apply(self._init_weights)
-        self.last_layer = weight_norm(nn.Linear(bottleneck_dim, out_dim, bias=False))
-        self.last_layer.weight_g.data.fill_(1)
+        self.last_layer = weight_norm_v2(nn.Linear(bottleneck_dim, out_dim, bias=False))
+        self.last_layer.parametrizations.weight.original0.data.fill_(1)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
