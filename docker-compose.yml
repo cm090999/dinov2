@@ -9,6 +9,7 @@ services:
     volumes:
       - .:/workspace/dinov2
       - /mnt/nvme2:/workspace/data
+      - /home/ubuntu/localstorage/eyebench/datasets/restructured:/workspace/data_gh
     deploy:
       resources:
         reservations:
