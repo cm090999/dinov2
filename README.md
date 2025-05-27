@@ -31,8 +31,31 @@ Test imagenet locally:
 ```bash
 python dinov2/train/train.py --config-file dinov2/configs/train/vits14.yaml --output-dir testimagenet train.dataset_path=ImageNet:split=TRAIN:root=/workspace/data/imagenet1k/imagenet1k:extra=/workspace/data/imagenet1k/imagenet1k
 ```
+```
+export XFORMERS_DISABLED=1
+```
+```bash
+python dinov2/train/train.py --config-file dinov2/configs/train/vits14.yaml --output-dir testimagenet train.dataset_path=ImageNet:split=TRAIN:root=/workspace/data_gh/imagenet1k:extra=/workspace/data_gh/imagenet1k
+```
+export MASTER_ADDR=localhost
+export MASTER_PORT=12355        # any free port
+export RANK=0                   # your process rank (single process → 0)
+export WORLD_SIZE=1             # total processes (just 1)
+export LOCAL_RANK=0             # local rank for single GPU
+export LOCAL_WORLD_SIZE=1       # number of GPUs on this node (1)
 
 
+# Set up GH200
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+pip install ninja
+export TORCH_CUDA_ARCH_LIST="7.2;7.5;8.0;8.6;9.0+PTX"
+export MAX_JOBS=16
+pip install -v --no-build-isolation -U git+https://github.com/facebookresearch/xformers.git@main#egg=xformers
+
+pip install omegaconf torchmetrics fvcore iopath aim pandas &&     pip install git+https://github.com/facebookincubator/submitit
+pip install -e .
 
 # DINOv2: Learning Robust Visual Features without Supervision
 
