@@ -10,7 +10,7 @@ from typing import Any, Callable, List, Optional, TypeVar
 import torch
 from torch.utils.data import Sampler
 
-from .datasets import ImageNet, ImageNet22k
+from .datasets import ImageNet, ImageNet22k, CustomVisionDataset
 from .samplers import EpochSampler, InfiniteSampler, ShardedInfiniteSampler
 
 
@@ -49,7 +49,7 @@ def _parse_dataset_str(dataset_str: str):
 
     for token in tokens[1:]:
         key, value = token.split("=")
-        assert key in ("root", "extra", "split")
+        assert key in ("root", "extra", "split", "labelColumn")
         kwargs[key] = value
 
     if name == "ImageNet":
@@ -58,6 +58,8 @@ def _parse_dataset_str(dataset_str: str):
             kwargs["split"] = ImageNet.Split[kwargs["split"]]
     elif name == "ImageNet22k":
         class_ = ImageNet22k
+    elif name == "CustomVisionDataset":
+        class_ = CustomVisionDataset
     else:
         raise ValueError(f'Unsupported dataset "{name}"')
 
@@ -83,8 +85,15 @@ def make_dataset(
     """
     logger.info(f'using dataset: "{dataset_str}"')
 
-    class_, kwargs = _parse_dataset_str(dataset_str)
-    dataset = class_(transform=transform, target_transform=target_transform, **kwargs)
+    dataset_strs = dataset_str.split(";")
+    datasets = []
+    for ds_str in dataset_strs:
+        class_, kwargs = _parse_dataset_str(ds_str)
+        dataset = class_(transform=transform, target_transform=target_transform, **kwargs)
+        datasets.append(dataset)
+
+    from torch.utils.data import ConcatDataset
+    dataset = ConcatDataset(datasets)
 
     logger.info(f"# of dataset samples: {len(dataset):,d}")
 
