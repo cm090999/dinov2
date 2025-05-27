@@ -58,7 +58,8 @@ def build_metric(metric_type: MetricType, *, num_classes: int, ks: Optional[tupl
 
 def build_topk_accuracy_metric(average_type: AccuracyAveraging, num_classes: int, ks: tuple = (1, 5)):
     metrics: Dict[str, Metric] = {
-        f"top-{k}": MulticlassAccuracy(top_k=k, num_classes=int(num_classes), average=average_type.value) for k in ks
+        f"top-{k}": MulticlassAccuracy(top_k=k, num_classes=int(num_classes), average=average_type.value)
+        for k in ks if k < int(num_classes)
     }
     return MetricCollection(metrics)
 

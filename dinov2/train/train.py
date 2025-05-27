@@ -38,50 +38,50 @@ def periodic_eval(model, cfg, iteration, step, aim_run=None):
     from dinov2.data.transforms import make_classification_eval_transform
     import json
 
-    # Make eval model and data
-    eval_model = build_model_for_eval(cfg, chkpt_path)
-    eval_transform = make_classification_eval_transform()
+    # Multiple eval datasets can be specified by separating eval_dataset and eval_dataset_name with >
+    dataset_list = cfg.evaluation.eval_dataset.split(">")
+    dataset_name_list = cfg.evaluation.eval_dataset_name.split(">")
 
-    eval_dataset = make_dataset(
-        dataset_str=cfg.evaluation.eval_dataset,
-        transform=eval_transform,
-    )
-    eval_train_size = int(len(eval_dataset) * cfg.evaluation.train_fraction)
-    eval_val_size = len(eval_dataset) - eval_train_size
-    eval_train_dataset, eval_val_dataset = torch.utils.data.random_split(
-        eval_dataset, [eval_train_size, eval_val_size]
-    )
-    
-    # Run eval
-    results_dict_knn = eval_knn(eval_model,eval_train_dataset,eval_val_dataset,accuracy_averaging=AccuracyAveraging.MEAN_ACCURACY,nb_knn=(10, 20, 100, 200),temperature=0.07,batch_size=256,num_workers=8,gather_on_cpu=False,)
-    metrics_file_path = os.path.join(cfg.train.output_dir, "eval", f"eval_results_iteration_{iteration}_step_{step}.csv")
-    
-    import pandas as pd
-    knn_df = []
-    if distributed.is_main_process():
-        for neighbor in results_dict_knn.keys():
-            for topx in results_dict_knn[neighbor].keys():
-                neighbor_name = neighbor[1]
-                log_name = f"knn_neighbors_{neighbor_name}_top_{topx}"
-                result_value = results_dict_knn[neighbor][topx].item()
-                #append row with neighbor, topx, and result_value
-                knn_df.append({"neighbor": neighbor_name, "topx": topx, "result_value": result_value})
-                if aim_run:
-                    aim_run.track(result_value, name=f'eval/{log_name}', step=step, context={"subset": "eval"})
+    for i, (dataset, dataset_name) in enumerate(zip(dataset_list, dataset_name_list)):
 
-    if distributed.is_main_process():
-        # Save results to CSV
-        knn_df = pd.DataFrame(knn_df)
-        knn_df.to_csv(metrics_file_path, index=False)
-        logger.info(f"Saved KNN results to {metrics_file_path}")
-    # with open(metrics_file_path, "a") as f:
-    #     for k, v in results_dict_knn.items():
-    #         f.write(json.dumps({k: v}) + "\n")
-    #         if aim_run and distributed.is_main_process(): # Also log to aim here
-    #             aim_run.track(v, name=f'eval/{k}', step=step, context={"subset": "eval"})
+        eval_model = build_model_for_eval(cfg, chkpt_path)
+        eval_transform = make_classification_eval_transform()
 
-    if distributed.is_enabled():
-        torch.distributed.barrier()
+        eval_dataset = make_dataset(
+            dataset_str=dataset,
+            transform=eval_transform,
+        )
+        eval_train_size = int(len(eval_dataset) * cfg.evaluation.train_fraction)
+        eval_val_size = len(eval_dataset) - eval_train_size
+        eval_train_dataset, eval_val_dataset = torch.utils.data.random_split(
+            eval_dataset, [eval_train_size, eval_val_size]
+        )
+        
+        # Run eval
+        results_dict_knn = eval_knn(eval_model,eval_train_dataset,eval_val_dataset,accuracy_averaging=AccuracyAveraging.MEAN_ACCURACY,nb_knn=(10, 20, 100, 200),temperature=0.07,batch_size=256,num_workers=48,gather_on_cpu=False,)
+        metrics_file_path = os.path.join(cfg.train.output_dir, "eval", f"eval_results_iteration_{iteration}_step_{step}_{dataset_name}.csv")
+        
+        import pandas as pd
+        knn_df = []
+        if distributed.is_main_process():
+            for neighbor in results_dict_knn.keys():
+                for topx in results_dict_knn[neighbor].keys():
+                    neighbor_name = neighbor[1]
+                    log_name = f"knn_neighbors_{neighbor_name}_top_{topx}_{dataset_name}"
+                    result_value = results_dict_knn[neighbor][topx].item()
+                    #append row with neighbor, topx, and result_value
+                    knn_df.append({"neighbor": neighbor_name, "topx": topx, "result_value": result_value})
+                    if aim_run:
+                        aim_run.track(result_value, name=f'eval/{log_name}', step=step, context={"subset": "eval"})
+
+        if distributed.is_main_process():
+            # Save results to CSV
+            knn_df = pd.DataFrame(knn_df)
+            knn_df.to_csv(metrics_file_path, index=False)
+            logger.info(f"Saved KNN results to {metrics_file_path}")
+
+        if distributed.is_enabled():
+            torch.distributed.barrier()
     ############\ KNN EVAL \############
 
     torch.cuda.synchronize()
