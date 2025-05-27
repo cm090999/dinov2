@@ -107,7 +107,10 @@ class Block(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         def attn_residual_func(x: Tensor) -> Tensor:
-            return self.ls1(self.attn(self.norm1(x)))
+            x = self.norm1(x)
+            x = self.attn(x)
+            x = self.ls1(x)
+            return x
 
         def ffn_residual_func(x: Tensor) -> Tensor:
             return self.ls2(self.mlp(self.norm2(x)))

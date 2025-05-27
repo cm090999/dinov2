@@ -13,7 +13,7 @@ import warnings
 
 from torch import Tensor
 from torch import nn
-
+import torch
 
 logger = logging.getLogger("dinov2")
 
@@ -81,7 +81,18 @@ class MemEffAttention(Attention):
 
         q, k, v = unbind(qkv, 2)
 
-        x = memory_efficient_attention(q, k, v, attn_bias=attn_bias)
+        # print(f"Batch size: {B}, calling memory_efficient_attention")
+        # print(f"Shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
+        # print(f"Device: {q.device}, dtype: {q.dtype}")
+        if q.dtype == torch.float16:
+            import torch.nn.functional as F
+            q_t = q.transpose(1, 2)  # [B, heads, seq_len, head_dim]
+            k_t = k.transpose(1, 2)
+            v_t = v.transpose(1, 2)
+            x = F.scaled_dot_product_attention(q_t, k_t, v_t)
+            x = x.transpose(1, 2)
+        else:
+            x = memory_efficient_attention(q, k, v, attn_bias=attn_bias)
         x = x.reshape([B, N, C])
 
         x = self.proj(x)
