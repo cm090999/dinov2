@@ -102,14 +102,10 @@ class FSDPCheckpointer(Checkpointer):
             return
 
         data = {}
+        with FSDP.state_dict_type(self.model, StateDictType.LOCAL_STATE_DICT):
+            data["model"] = self.model.state_dict()
 
-        # NEW API: extract full state dict
-        data["model"] = get_state_dict(
-            self.model,
-            group=FSDP.get_model_group(self.model),  # if needed, otherwise can omit
-            state_dict_type=StateDictType.FULL_STATE_DICT,
-        )
-
+        # data["model"] = self.model.state_dict()
         for key, obj in self.checkpointables.items():
             data[key] = obj.state_dict()
         data.update(kwargs)
@@ -123,17 +119,8 @@ class FSDPCheckpointer(Checkpointer):
         self.tag_last_checkpoint(basename)
 
     def load(self, *args, **kwargs):
-        # assumes you've already loaded the state dict from disk
-        checkpoint = super().load(*args, **kwargs)
-
-        # NEW API: set state dict into model
-        if "model" in checkpoint.keys():
-            set_state_dict(
-                self.model,
-                checkpoint["model"],
-                state_dict_type=StateDictType.FULL_STATE_DICT,
-            )
-        return checkpoint
+        with FSDP.state_dict_type(self.model, StateDictType.LOCAL_STATE_DICT):
+            return super().load(*args, **kwargs)
 
     def has_checkpoint(self) -> bool:
         """
