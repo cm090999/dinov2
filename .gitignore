@@ -12,3 +12,4 @@ dist/
 
 .aim/
 *.pth
+.venv
