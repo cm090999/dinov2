@@ -61,6 +61,11 @@ def is_fsdp(x):
 def is_sharded_fsdp(x):
     return is_fsdp(x) and x.sharding_strategy is not ShardingStrategy.NO_SHARD
 
+def free_if_fsdp(x: FSDP):
+    if is_sharded_fsdp(x) and x._has_params:
+        handle = x._handle
+        _reshard(x, handle, True)
+
 
 def free_if_fsdp(x):
     if is_sharded_fsdp(x):
@@ -81,7 +86,9 @@ def reshard_fsdp_model(x):
 def rankstr():
     return f"rank_{distributed.get_global_rank()}"
 
-
+from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 class FSDPCheckpointer(Checkpointer):
     def save(self, name: str, **kwargs: Any) -> None:
         """
@@ -95,10 +102,14 @@ class FSDPCheckpointer(Checkpointer):
             return
 
         data = {}
-        with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):
-            data["model"] = self.model.state_dict()
 
-        # data["model"] = self.model.state_dict()
+        # NEW API: extract full state dict
+        data["model"] = get_state_dict(
+            self.model,
+            group=FSDP.get_model_group(self.model),  # if needed, otherwise can omit
+            state_dict_type=StateDictType.FULL_STATE_DICT,
+        )
+
         for key, obj in self.checkpointables.items():
             data[key] = obj.state_dict()
         data.update(kwargs)
@@ -112,8 +123,17 @@ class FSDPCheckpointer(Checkpointer):
         self.tag_last_checkpoint(basename)
 
     def load(self, *args, **kwargs):
-        with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):
-            return super().load(*args, **kwargs)
+        # assumes you've already loaded the state dict from disk
+        checkpoint = super().load(*args, **kwargs)
+
+        # NEW API: set state dict into model
+        if "model" in checkpoint.keys():
+            set_state_dict(
+                self.model,
+                checkpoint["model"],
+                state_dict_type=StateDictType.FULL_STATE_DICT,
+            )
+        return checkpoint
 
     def has_checkpoint(self) -> bool:
         """
