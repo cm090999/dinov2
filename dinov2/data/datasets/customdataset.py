@@ -43,6 +43,9 @@ class CustomVisionDataset(VisionDataset):
 
         # concatenate all dataframes
         self.data = pd.concat(all_dfs, ignore_index=True)
+
+        # drop all rows where label is -1
+        self.data = self.data[self.data["label"] != -1].reset_index(drop=True)
         
         self.image_paths = self.data["full_image_path"].tolist()
         self.labels = self.data["label"].tolist()
