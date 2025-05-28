@@ -114,6 +114,12 @@ For python-based LazyConfig, use "path.key=value".
         type=str,
         help="Output directory to save logs and checkpoints",
     )
+    parser.add_argument(
+        "--experiment-name",
+        default="dinov2_experiment",
+        type=str,
+        help="Name of the experiment for logging purposes",
+    )
 
     return parser
 
@@ -377,11 +383,10 @@ def main(args):
 
     # Initialize Aim run
     if distributed.is_main_process():
-        repo_dir = os.path.join(cfg.train.output_dir, ".aim_repo")
-        if not os.path.exists(repo_dir):
-            os.makedirs(repo_dir)
-        aim_run = aim.Run(experiment="dinov2_training",
-                          repo=repo_dir,
+        if not os.path.exists(cfg.train.repo_dir):
+            os.makedirs(cfg.train.repo_dir)
+        aim_run = aim.Run(experiment=cfg.train.experiment_name,
+                          repo=cfg.train.repo_dir,
                           )
         aim_run['hparams'] = cfg
     else:

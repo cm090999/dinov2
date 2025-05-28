@@ -6,6 +6,7 @@
 import math
 import logging
 import os
+import datetime
 
 from omegaconf import OmegaConf
 
@@ -39,7 +40,12 @@ def write_config(cfg, output_dir, name="config.yaml"):
 
 def get_cfg_from_args(args):
     args.output_dir = os.path.abspath(args.output_dir)
+    args.opts += [f"train.repo_dir={args.output_dir}"]
+    # join the output directory with the experiment name
+    args.experiment_name = args.experiment_name + "_" + str(datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
+    args.output_dir = os.path.join(args.output_dir, args.experiment_name)
     args.opts += [f"train.output_dir={args.output_dir}"]
+    args.opts += [f"train.experiment_name={args.experiment_name}"]
     default_cfg = OmegaConf.create(dinov2_default_config)
     cfg = OmegaConf.load(args.config_file)
     cfg = OmegaConf.merge(default_cfg, cfg, OmegaConf.from_cli(args.opts))
