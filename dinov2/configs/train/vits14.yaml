@@ -38,8 +38,8 @@ crops:
 evaluation:
   eval_period_iterations: 100 # every 10 steps (not iterations)
   # eval_dataset: ImageNet:split=VAL:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/imagenet1k:extra=/home/ubuntu/localstorage/eyebench/datasets/restructured/imagenet1k
-  eval_dataset: CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/brset_highres:labelColumn=hypertension>ImageNet:split=VAL:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/imagenet1k:extra=/home/ubuntu/localstorage/eyebench/datasets/restructured/imagenet1k>CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/aptos2019-blindness-detection:labelColumn=label
-  eval_dataset_name: brset>imagenet>aptos
+  eval_dataset: CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/brset_highres:labelColumn=hypertension>CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/aptos2019-blindness-detection:labelColumn=label>CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/aireadi_highres_allcfp:labelColumn=cfp_grouped_label_study_group>ImageNet:split=VAL:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/imagenet1k:extra=/home/ubuntu/localstorage/eyebench/datasets/restructured/imagenet1k
+  eval_dataset_name: brset>imagenet>aptos>aireadi>imagenet
   train_fraction: 0.8
 block_expansion:
   enabled: True
