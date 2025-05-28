@@ -44,7 +44,7 @@ def periodic_eval(model, cfg, iteration, step, aim_run=None):
 
     for i, (dataset, dataset_name) in enumerate(zip(dataset_list, dataset_name_list)):
 
-        eval_model = build_model_for_eval(cfg, chkpt_path)
+        eval_model = build_model_for_eval(cfg, chkpt_path, enable_lora=True)
         eval_transform = make_classification_eval_transform()
 
         eval_dataset = make_dataset(

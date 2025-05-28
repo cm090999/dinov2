@@ -19,6 +19,7 @@ from dinov2.fsdp import get_fsdp_wrapper, ShardedGradScaler, get_fsdp_modules, r
 from dinov2.models.vision_transformer import BlockChunk, DinoVisionTransformer, Block
 from dinov2.models.block_expansion import expand_dinov2
 from dinov2.models.block_expansion import get_expanded_block_positions
+from dinov2.models.lora_adaptation import apply_lora_to_dinov2, get_lora_parameters
 
 try:
     from xformers.ops import fmha
@@ -27,6 +28,14 @@ except ImportError:
 
 
 logger = logging.getLogger("dinov2")
+
+# Debug function for frozen parameters
+from termcolor import colored
+
+def print_colored_parameters(model):
+    for name, param in model.named_parameters():
+        color = "red" if param.requires_grad else "blue"
+        print(colored(name, color))
 
 
 class SSLMetaArch(nn.Module):
@@ -51,16 +60,38 @@ class SSLMetaArch(nn.Module):
                 cfg.student.pretrained_weights,
                 checkpoint_key=None)
             
-            # import pdb; pdb.set_trace()
-            
-            # # Load state dict with potential resized pos_embed
-            # student_backbone.load_state_dict(chkpt["model"], strict=False)
-
         # Block expansion
         if cfg.block_expansion.enabled:
             logger.info("OPTIONS -- block expansion ENABLED")
             student_model_dict["backbone"] = expand_dinov2(student_model_dict["backbone"], cfg.block_expansion.expanded_blocks, cfg.block_expansion.path_dropout)
             teacher_model_dict["backbone"] = expand_dinov2(teacher_model_dict["backbone"], cfg.block_expansion.expanded_blocks, cfg.block_expansion.path_dropout)
+
+        # LoRA adaptation
+        if cfg.lora_adaptation.enabled:
+            logger.info("OPTIONS -- LoRA adaptation ENABLED")
+            logger.info(f"OPTIONS -- LoRA -- rank: {cfg.lora_adaptation.rank}")
+            logger.info(f"OPTIONS -- LoRA -- alpha: {cfg.lora_adaptation.alpha}")
+            logger.info(f"OPTIONS -- LoRA -- target_blocks: {cfg.lora_adaptation.target_blocks}")
+            logger.info(f"OPTIONS -- LoRA -- adapt_attention: {cfg.lora_adaptation.adapt_attention}")
+            logger.info(f"OPTIONS -- LoRA -- adapt_mlp: {cfg.lora_adaptation.adapt_mlp}")
+            student_model_dict["backbone"] = apply_lora_to_dinov2(
+                student_model_dict["backbone"],
+                target_blocks=cfg.lora_adaptation.target_blocks,
+                rank=cfg.lora_adaptation.rank,
+                alpha=cfg.lora_adaptation.alpha,
+                dropout=cfg.lora_adaptation.dropout,
+                adapt_attention=cfg.lora_adaptation.adapt_attention,
+                adapt_mlp=cfg.lora_adaptation.adapt_mlp,
+            )
+            teacher_model_dict["backbone"] = apply_lora_to_dinov2(
+                teacher_model_dict["backbone"],
+                target_blocks=cfg.lora_adaptation.target_blocks,
+                rank=cfg.lora_adaptation.rank,
+                alpha=cfg.lora_adaptation.alpha,
+                dropout=cfg.lora_adaptation.dropout,
+                adapt_attention=cfg.lora_adaptation.adapt_attention,
+                adapt_mlp=cfg.lora_adaptation.adapt_mlp,
+            )
 
         self.embed_dim = embed_dim
         self.dino_out_dim = cfg.dino.head_n_prototypes
@@ -134,14 +165,67 @@ class SSLMetaArch(nn.Module):
         for p in self.teacher.parameters():
             p.requires_grad = False
 
+        if cfg.block_expansion.enabled and hasattr(cfg, 'lora_adaptation') and cfg.lora_adaptation.enabled:
+            raise ValueError("Block expansion and LoRA adaptation cannot be enabled simultaneously")
+
         if cfg.block_expansion.enabled:
             logger.info(f"OPTIONS -- block expansion: expanded blocks: {cfg.block_expansion.expanded_blocks}, fix weights of original blocks")
             block_positions = get_expanded_block_positions(cfg.block_expansion.expanded_blocks)
-            for p in self.student.backbone.blocks.parameters():
+            for p in self.student.backbone.parameters():
                 p.requires_grad = False
             for pos in block_positions:
                 for p in self.student.backbone.blocks[pos].parameters():
                     p.requires_grad = True
+            # Log the number of trainable parameters
+            trainable_params_mod = [p for p in self.student.backbone.parameters() if p.requires_grad]
+            total_params_mod = [p for p in self.student.backbone.parameters()]
+            trainable_params = sum(p.numel() for p in trainable_params_mod)
+            total_params = sum(p.numel() for p in total_params_mod)
+            logger.info(f"OPTIONS -- block expansion: {trainable_params} trainable parameters after block expansion")
+            logger.info(f"OPTIONS -- block expansion: {total_params} total parameters after block expansion")
+            logger.info(f"OPTIONS -- block expansion: {100 * trainable_params / total_params:.2f}% of parameters are trainable after block expansion")
+            logger.info(f"OPTIONS -- block expansion: {len(block_positions)} blocks expanded")
+
+        elif cfg.lora_adaptation.enabled:
+            logger.info("OPTIONS -- LoRA adaptation: LoRA parameters configured during model building")
+            # LoRA parameters and freezing should already be set correctly during apply_lora_to_dinov2
+            # Just verify the configuration
+            lora_params_mod = get_lora_parameters(self.student.backbone)
+            frozen_params_mod = [p for p in self.student.backbone.parameters() if not p.requires_grad]
+            trainable_params_mod = [p for p in self.student.backbone.parameters() if p.requires_grad]
+            total_params_mod = [p for p in self.student.backbone.parameters()]
+
+            # Log the counts of parameters
+            lora_params = sum(p.numel() for p in lora_params_mod)
+            frozen_params = sum(p.numel() for p in frozen_params_mod)
+            trainable_params = sum(p.numel() for p in trainable_params_mod)
+            total_params = sum(p.numel() for p in total_params_mod)
+
+            logger.info(f"OPTIONS -- LoRA adaptation: {lora_params} LoRA parameters")
+            logger.info(f"OPTIONS -- LoRA adaptation: {frozen_params} frozen parameters")
+            logger.info(f"OPTIONS -- LoRA adaptation: {trainable_params} trainable parameters")
+            logger.info(f"OPTIONS -- LoRA adaptation: {total_params} total parameters")
+            logger.info(f"OPTIONS -- LoRA adaptation: {100 * lora_params / total_params:.2f}% of parameters are LoRA parameters")
+            logger.info(f"OPTIONS -- LoRA adaptation: {100 * frozen_params / total_params:.2f}% of parameters are frozen")
+
+            # Verify that only LoRA parameters are trainable
+            non_lora_trainable_mod = [p for p in trainable_params_mod if not any('lora_' in name for name, param in self.student.backbone.named_parameters() if param is p)]
+            non_lora_trainable = sum(p.numel() for p in non_lora_trainable_mod)
+            if non_lora_trainable:
+                logger.warning(f"OPTIONS -- LoRA adaptation: {non_lora_trainable} non-LoRA parameters are still trainable")
+
+        else:
+            logger.info("OPTIONS -- no block expansion or LoRA adaptation enabled, all parameters are trainable")
+            # Log the number of trainable parameters
+            frozen_params = sum(p.numel() for p in self.student.backbone.parameters() if not p.requires_grad)
+            trainable_params = sum(p.numel() for p in self.student.backbone.parameters() if p.requires_grad)
+            total_params = sum(p.numel() for p in self.student.backbone.parameters())
+            logger.info(f"OPTIONS -- {trainable_params} trainable parameters")
+            logger.info(f"OPTIONS -- {total_params} total parameters")
+            logger.info(f"OPTIONS -- {100 * trainable_params / total_params:.2f}% of parameters are trainable")
+
+        # Log frozen, trainable and total parameters to aim
+        # TODO
 
         logger.info(f"Student and Teacher are built: they are both {cfg.student.arch} network.")
 

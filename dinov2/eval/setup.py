@@ -35,6 +35,17 @@ def get_args_parser(
         help="Pretrained model weights",
     )
     parser.add_argument(
+        "--lora-weights",
+        type=str,
+        default=None,
+        help="LoRA adapter weights to load (optional)",
+    )
+    parser.add_argument(
+        "--enable-lora",
+        action="store_true",
+        help="Enable LoRA adaptation for evaluation",
+    )
+    parser.add_argument(
         "--output-dir",
         default="",
         type=str,
@@ -59,9 +70,24 @@ def get_autocast_dtype(config):
         return torch.float
 
 
-def build_model_for_eval(config, pretrained_weights):
-    model, _ = build_model_from_cfg(config, only_teacher=True, expand=True)
-    dinov2_utils.load_pretrained_weights(model, pretrained_weights, "teacher")
+def build_model_for_eval(config, pretrained_weights, enable_lora=False, lora_weights=None):
+    # Determine if LoRA should be enabled based on config and arguments
+    use_lora = config.lora_adaptation.enabled and enable_lora
+    
+    model, _ = build_model_from_cfg(config, only_teacher=True, expand=True, lora=use_lora)
+    
+    # Load pretrained weights if provided
+    if pretrained_weights:
+        dinov2_utils.load_pretrained_weights(model, pretrained_weights, "teacher")
+    
+    # Load LoRA weights if provided
+    if use_lora and lora_weights:
+        import torch
+        from dinov2.models.lora_adaptation import load_lora_state_dict
+        print(f"Loading LoRA weights from: {lora_weights}")
+        lora_state_dict = torch.load(lora_weights, map_location="cpu")
+        load_lora_state_dict(model, lora_state_dict)
+    
     model.eval()
     model.cuda()
     return model
@@ -70,6 +96,11 @@ def build_model_for_eval(config, pretrained_weights):
 def setup_and_build_model(args) -> Tuple[Any, torch.dtype]:
     cudnn.benchmark = True
     config = setup(args)
-    model = build_model_for_eval(config, args.pretrained_weights)
+    model = build_model_for_eval(
+        config, 
+        args.pretrained_weights, 
+        enable_lora=args.enable_lora, 
+        lora_weights=getattr(args, 'lora_weights', None)
+    )
     autocast_dtype = get_autocast_dtype(config)
     return model, autocast_dtype

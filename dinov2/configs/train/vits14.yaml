@@ -45,3 +45,11 @@ block_expansion:
   enabled: True
   expanded_blocks: [3, 7, 11] #[] #[3, 7, 11]
   path_dropout: 0.3
+lora_adaptation:
+  enabled: False
+  rank: 8
+  alpha: 16
+  target_blocks: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+  adapt_attention: True
+  adapt_mlp: True
+  dropout: 0.1
