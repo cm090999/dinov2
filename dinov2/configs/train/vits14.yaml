@@ -5,26 +5,34 @@ ibot:
   separate_head: true
   head_n_prototypes: 131072
 train:
-  batch_size_per_gpu: 8
-  accumulation_steps: 128 # 256 --> 2048 batch size
-  dataset_path: ImageNet:split=TRAIN
+  batch_size_per_gpu: 128
+  accumulation_steps: 4 # 8 # 256 --> 2048 batch size
+  # dataset_path: ImageNet:split=TRAIN:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/imagenet1k:extra=/home/ubuntu/localstorage/eyebench/datasets/restructured/imagenet1k
+  # dataset_path: CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/justRAIGS_highres:labelColumn=label
+  # dataset_path: CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/eyepacs_high_res:labelColumn=label
+  # dataset_path: CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/DDR_high_res:labelColumn=label
+  dataset_path: CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/justRAIGS_highres:labelColumn=label;CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/eyepacs_highres:labelColumn=label;CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/DDR_high_res:labelColumn=label
   centering: sinkhorn_knopp
   OFFICIAL_EPOCH_LENGTH: 10
+  num_workers: 32
 student:
-  arch: vit_small
+  arch: vit_base
   patch_size: 14
   drop_path_rate: 0.4
   ffn_layer: mlp
   block_chunks: 0
-  pretrained_weights: 'https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth' # '' # 'https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth'
+  pretrained_weights: 'https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vitb14_pretrain.pth' # '' # 'https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth'
 teacher:
   momentum_teacher: 0.994
 optim:
   epochs: 50
+  weight_decay: 0.04
   weight_decay_end: 0.2
-  base_lr: 2.0e-04  # learning rate for a batch size of 1024
+  base_lr: 0.5e-4  # learning rate for a batch size of 1024
   warmup_epochs: 10
-  layerwise_decay: 1.0
+  clip_grad: 3.0
+  freeze_last_layer_epochs: 1
+  layerwise_decay: 0.9
 crops:
   local_crops_size: 98
 evaluation:
