@@ -116,3 +116,33 @@ class DataAugmentationDINO(object):
         output["offsets"] = ()
 
         return output
+
+
+def debug_save_crops(output, image):
+    """Debug function to save crops to disk for visualization."""
+    import os
+    from PIL import Image
+    import torch
+
+    output_dir = "debug_crops"
+    os.makedirs(output_dir, exist_ok=True)
+
+    for i, crop in enumerate(output["global_crops"]):
+        # unnormalize and convert to PIL image
+        # IMAGENET_DEFAULT_MEAN = (0.485, 0.456, 0.406)
+        # IMAGENET_DEFAULT_STD = (0.229, 0.224, 0.225)
+        # reverse normalization
+
+
+        Image.fromarray((crop * 255).byte().permute(1, 2, 0).numpy()).save(os.path.join(output_dir, f"global_crop_{i}.png"))
+
+    for i, crop in enumerate(output["global_crops_teacher"]):
+        Image.fromarray((crop * 255).byte().permute(1, 2, 0).numpy()).save(os.path.join(output_dir, f"global_crops_teacher_{i}.png"))
+
+    for i, crop in enumerate(output["local_crops"]):
+        Image.fromarray((crop * 255).byte().permute(1, 2, 0).numpy()).save(os.path.join(output_dir, f"local_crop_{i}.png"))
+
+    # Save original image for reference
+    image.save(os.path.join(output_dir, "original_image.png"))
+
+    logger.info(f"Saved crops to {output_dir}. Check the images for debugging.")
