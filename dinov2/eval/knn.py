@@ -376,6 +376,185 @@ def eval_knn_with_model(
     return results_dict
 
 
+def eval_knn_with_features(
+    features,
+    labels,
+    train_indices,
+    val_indices,
+    accuracy_averaging,
+    nb_knn,
+    temperature,
+    n_per_class_list=[-1],
+    n_tries=1,
+):
+    """
+    Evaluate KNN using pre-extracted features and specified train/val indices.
+    
+    Args:
+        features: Pre-extracted features for the entire dataset
+        labels: Labels for the entire dataset 
+        train_indices: Indices to use for training
+        val_indices: Indices to use for validation
+        Other args: Same as eval_knn
+    
+    Returns:
+        results_dict: Dictionary with KNN evaluation results
+    """
+    
+    # Extract train and validation features/labels using indices
+    train_features = features[train_indices]
+    train_labels = labels[train_indices]
+    val_features = features[val_indices] 
+    val_labels = labels[val_indices]
+    
+    num_classes = train_labels.max() + 1
+    metric_collection = build_topk_accuracy_metric(accuracy_averaging, num_classes=num_classes)
+
+    device = torch.cuda.current_device()
+    partial_module = partial(KnnModule, T=temperature, device=device, num_classes=num_classes)
+    knn_module_dict = create_module_dict(
+        module=partial_module,
+        n_per_class_list=n_per_class_list,
+        n_tries=n_tries,
+        nb_knn=nb_knn,
+        train_features=train_features,
+        train_labels=train_labels,
+    )
+    
+    postprocessors, metrics = {}, {}
+    for n_per_class, knn_module in knn_module_dict.items():
+        for t, knn_try in knn_module.items():
+            postprocessors = {
+                **postprocessors,
+                **{(n_per_class, t, k): DictKeysModule([n_per_class, t, k]) for k in knn_try.nb_knn},
+            }
+            metrics = {**metrics, **{(n_per_class, t, k): metric_collection.clone() for k in knn_try.nb_knn}}
+
+    # ============ evaluation ... ============
+    logger.info("Start the k-NN classification.")
+    
+    # Directly compute KNN predictions on validation features
+    device = torch.cuda.current_device() if torch.cuda.is_available() else torch.device('cpu')
+    val_features = val_features.to(device)
+    val_labels = val_labels.to(device)
+    
+    # Move metrics to device
+    for metric in metrics.values():
+        metric.to(device)
+    
+    # Get KNN predictions
+    knn_predictions = knn_module_dict(val_features)
+    
+    # Compute metrics
+    results_dict = {}
+    for key, postprocessor in postprocessors.items():
+        processed_outputs = postprocessor(knn_predictions, val_labels)
+        metric = metrics[key]
+        metric.update(**processed_outputs)
+        results_dict[key] = metric.compute()
+
+    # Averaging the results over the n tries for each value of n_per_class
+    for n_per_class, knn_module in knn_module_dict.items():
+        first_try = list(knn_module.keys())[0]
+        k_list = knn_module[first_try].nb_knn
+        for k in k_list:
+            keys = results_dict[(n_per_class, first_try, k)].keys()  # keys are e.g. `top-1` and `top-5`
+            results_dict[(n_per_class, k)] = {
+                key: torch.mean(torch.stack([results_dict[(n_per_class, t, k)][key] for t in knn_module.keys()]))
+                for key in keys
+            }
+            for t in knn_module.keys():
+                del results_dict[(n_per_class, t, k)]
+
+    return results_dict
+
+
+def eval_knn_multiple_splits(
+    model,
+    dataset,
+    train_fraction,
+    accuracy_averaging,
+    nb_knn,
+    temperature,
+    batch_size,
+    num_workers,
+    gather_on_cpu,
+    n_splits=1,
+    n_per_class_list=[-1],
+    n_tries=1,
+):
+    """
+    Evaluate KNN with multiple random train/validation splits.
+    Features are extracted only once from the full dataset.
+    
+    Args:
+        model: The model to evaluate
+        dataset: The full evaluation dataset
+        train_fraction: Fraction of data to use for training 
+        n_splits: Number of different train/val splits to evaluate
+        Other args: Same as eval_knn
+        
+    Returns:
+        results_dict: Dictionary with mean and std results across splits
+    """
+    model = ModelWithNormalize(model)
+
+    logger.info("Extracting features for full evaluation dataset...")
+    features, labels = extract_features(
+        model, dataset, batch_size, num_workers, gather_on_cpu=gather_on_cpu
+    )
+    logger.info(f"Features created, shape {features.shape}.")
+
+    # Perform multiple evaluations with different splits
+    all_results = []
+    dataset_size = len(dataset)
+    train_size = int(dataset_size * train_fraction)
+    
+    for split_idx in range(n_splits):
+        logger.info(f"Evaluating split {split_idx + 1}/{n_splits}")
+        
+        # Create random split with different seed for each split
+        torch.manual_seed(split_idx)
+        indices = torch.randperm(dataset_size)
+        train_indices = indices[:train_size]
+        val_indices = indices[train_size:]
+        
+        # Evaluate with pre-extracted features
+        split_results = eval_knn_with_features(
+            features=features,
+            labels=labels,
+            train_indices=train_indices,
+            val_indices=val_indices,
+            accuracy_averaging=accuracy_averaging,
+            nb_knn=nb_knn,
+            temperature=temperature,
+            n_per_class_list=n_per_class_list,
+            n_tries=n_tries,
+        )
+        all_results.append(split_results)
+    
+    # If only one split, return results as-is for backward compatibility
+    if n_splits == 1:
+        return all_results[0]
+    
+    # Calculate mean and std across splits
+    final_results = {}
+    
+    # Get all keys from first result
+    sample_result = all_results[0]
+    for key in sample_result.keys():
+        # Collect values across all splits for each metric
+        values_per_metric = {}
+        for metric_name in sample_result[key].keys():
+            values = torch.stack([result[key][metric_name] for result in all_results])
+            values_per_metric[f"{metric_name}_mean"] = torch.mean(values)
+            values_per_metric[f"{metric_name}_std"] = torch.std(values)
+            
+        final_results[key] = values_per_metric
+    
+    return final_results
+
+
 def main(args):
     model, autocast_dtype = setup_and_build_model(args)
     eval_knn_with_model(

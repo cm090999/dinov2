@@ -33,7 +33,7 @@ def periodic_eval(model, cfg, iteration, step, aim_run=None):
     chkpt_path = do_test(cfg, model, f"training_iteration_{iteration}_step_{step}")
 
     ############  KNN EVAL  ############
-    from dinov2.eval.knn import eval_knn
+    from dinov2.eval.knn import eval_knn_multiple_splits
     from dinov2.eval.setup import build_model_for_eval
     from dinov2.data.transforms import make_classification_eval_transform
     import json
@@ -51,28 +51,56 @@ def periodic_eval(model, cfg, iteration, step, aim_run=None):
             dataset_str=dataset,
             transform=eval_transform,
         )
-        eval_train_size = int(len(eval_dataset) * cfg.evaluation.train_fraction)
-        eval_val_size = len(eval_dataset) - eval_train_size
-        eval_train_dataset, eval_val_dataset = torch.utils.data.random_split(
-            eval_dataset, [eval_train_size, eval_val_size]
-        )
         
-        # Run eval
-        results_dict_knn = eval_knn(eval_model,eval_train_dataset,eval_val_dataset,accuracy_averaging=AccuracyAveraging.MEAN_ACCURACY,nb_knn=(10, 20, 100, 200),temperature=0.07,batch_size=256,num_workers=48,gather_on_cpu=False,)
+        # Get number of splits from config, default to 1 for backward compatibility
+        n_splits = cfg.evaluation.n_splits
+
+        # Run eval with multiple splits (features extracted only once)
+        results_dict_knn = eval_knn_multiple_splits(
+            model=eval_model,
+            dataset=eval_dataset,
+            train_fraction=cfg.evaluation.train_fraction,
+            accuracy_averaging=AccuracyAveraging.MEAN_ACCURACY,
+            nb_knn=(5, 10, 20, 100, 200),
+            temperature=0.07,
+            batch_size=256,
+            num_workers=48,
+            gather_on_cpu=False,
+            n_splits=n_splits,
+        )
         metrics_file_path = os.path.join(cfg.train.output_dir, "eval", f"eval_results_iteration_{iteration}_step_{step}_{dataset_name}.csv")
         
         import pandas as pd
         knn_df = []
         if distributed.is_main_process():
             for neighbor in results_dict_knn.keys():
-                for topx in results_dict_knn[neighbor].keys():
-                    neighbor_name = neighbor[1]
-                    log_name = f"knn_neighbors_{neighbor_name}_top_{topx}_{dataset_name}"
-                    result_value = results_dict_knn[neighbor][topx].item()
-                    #append row with neighbor, topx, and result_value
-                    knn_df.append({"neighbor": neighbor_name, "topx": topx, "result_value": result_value})
-                    if aim_run:
-                        aim_run.track(result_value, name=f'eval/{log_name}', step=step, context={"subset": "eval"})
+                for metric_name in results_dict_knn[neighbor].keys():
+                    neighbor_name = neighbor[1] if isinstance(neighbor, tuple) else neighbor
+                    
+                    # Check if this is mean/std results (multiple splits) or single result
+                    if metric_name.endswith('_mean'):
+                        base_metric = metric_name.replace('_mean', '')
+                        std_metric = metric_name.replace('_mean', '_std')
+                        
+                        mean_value = results_dict_knn[neighbor][metric_name].item()
+                        std_value = results_dict_knn[neighbor][std_metric].item() if std_metric in results_dict_knn[neighbor] else 0.0
+                        
+                        log_name_mean = f"knn_neighbors_{neighbor_name}_{base_metric}_mean_{dataset_name}"
+                        log_name_std = f"knn_neighbors_{neighbor_name}_{base_metric}_std_{dataset_name}"
+                        
+                        knn_df.append({"neighbor": neighbor_name, "metric": f"{base_metric}_mean", "result_value": mean_value})
+                        knn_df.append({"neighbor": neighbor_name, "metric": f"{base_metric}_std", "result_value": std_value})
+                        
+                        if aim_run:
+                            aim_run.track(mean_value, name=f'eval/{log_name_mean}', step=step, context={"subset": "eval"})
+                            aim_run.track(std_value, name=f'eval/{log_name_std}', step=step, context={"subset": "eval"})
+                    elif not metric_name.endswith('_std'):  # Skip std entries as they're handled with mean
+                        # Single split case (backward compatibility)
+                        log_name = f"knn_neighbors_{neighbor_name}_{metric_name}_{dataset_name}"
+                        result_value = results_dict_knn[neighbor][metric_name].item()
+                        knn_df.append({"neighbor": neighbor_name, "metric": metric_name, "result_value": result_value})
+                        if aim_run:
+                            aim_run.track(result_value, name=f'eval/{log_name}', step=step, context={"subset": "eval"})
 
         if distributed.is_main_process():
             # Save results to CSV
