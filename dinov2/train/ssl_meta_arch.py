@@ -39,9 +39,10 @@ def print_colored_parameters(model):
 
 
 class SSLMetaArch(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg, aim_run=None):
         super().__init__()
         self.cfg = cfg
+        self.aim_run = aim_run
         self.fp16_scaler = ShardedGradScaler() if cfg.compute_precision.grad_scaler else None
 
         student_model_dict = dict()
@@ -225,9 +226,59 @@ class SSLMetaArch(nn.Module):
             logger.info(f"OPTIONS -- {100 * trainable_params / total_params:.2f}% of parameters are trainable")
 
         # Log frozen, trainable and total parameters to aim
-        # TODO
+        self._log_parameter_stats_to_aim()
 
         logger.info(f"Student and Teacher are built: they are both {cfg.student.arch} network.")
+
+    def _log_parameter_stats_to_aim(self):
+        """Log parameter statistics to Aim if available."""
+        if self.aim_run is None:
+            return
+            
+        # Calculate backbone parameters
+        backbone_frozen_params = sum(p.numel() for p in self.student.backbone.parameters() if not p.requires_grad)
+        backbone_trainable_params = sum(p.numel() for p in self.student.backbone.parameters() if p.requires_grad)
+        backbone_total_params = sum(p.numel() for p in self.student.backbone.parameters())
+        
+        # Calculate total model parameters (including heads)
+        total_frozen_params = sum(p.numel() for p in self.student.parameters() if not p.requires_grad)
+        total_trainable_params = sum(p.numel() for p in self.student.parameters() if p.requires_grad)
+        total_model_params = sum(p.numel() for p in self.student.parameters())
+        
+        # Log as model_info (distinct from hyperparameters)
+        model_info = {
+            'backbone_total_params': backbone_total_params,
+            'backbone_trainable_params': backbone_trainable_params,
+            'backbone_frozen_params': backbone_frozen_params,
+            'backbone_trainable_percentage': 100 * backbone_trainable_params / backbone_total_params if backbone_total_params > 0 else 0,
+            'total_model_params': total_model_params,
+            'total_trainable_params': total_trainable_params,
+            'total_frozen_params': total_frozen_params,
+            'total_trainable_percentage': 100 * total_trainable_params / total_model_params if total_model_params > 0 else 0,
+        }
+        
+        # Add specific adaptation info
+        if self.cfg.block_expansion.enabled:
+            block_positions = get_expanded_block_positions(self.cfg.block_expansion.expanded_blocks)
+            model_info.update({
+                'adaptation_type': 'block_expansion',
+                'expanded_blocks_count': len(block_positions),
+                'expanded_blocks': self.cfg.block_expansion.expanded_blocks,
+            })
+        elif self.cfg.lora_adaptation.enabled:
+            lora_params = sum(p.numel() for p in get_lora_parameters(self.student.backbone))
+            model_info.update({
+                'adaptation_type': 'lora',
+                'lora_params': lora_params,
+                'lora_percentage': 100 * lora_params / backbone_total_params if backbone_total_params > 0 else 0,
+                'lora_rank': self.cfg.lora_adaptation.rank,
+                'lora_alpha': self.cfg.lora_adaptation.alpha,
+                'lora_target_blocks': self.cfg.lora_adaptation.target_blocks,
+            })
+        else:
+            model_info['adaptation_type'] = 'full_training'
+            
+        self.aim_run['model_info'] = model_info
 
     def forward(self, inputs):
         raise NotImplementedError

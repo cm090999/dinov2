@@ -420,7 +420,7 @@ def main(args):
     else:
         aim_run = None
 
-    model = SSLMetaArch(cfg).to(torch.device("cuda"))
+    model = SSLMetaArch(cfg, aim_run=aim_run).to(torch.device("cuda"))
     model.prepare_for_distributed_training()
 
     logger.info("Model:\n{}".format(model))
