@@ -30,14 +30,23 @@ class CustomVisionDataset(VisionDataset):
 
         all_dfs = []
         for r, lc in zip(all_roots, all_labelColumns):
-            # Load the dataset from the root directory
-            df = pd.read_csv(os.path.join(r, "labels.csv"))
-            # add column for full path to image: join root and image column
-            df["full_image_path"] = df["image"].apply(
-                lambda x: os.path.join(r, "images", x)
-            )
-            # add column for same consistent label column
-            df["label"] = df[lc]
+            if labelColumn is None or labelColumn == "":
+                df = pd.DataFrame()
+                # Just read images subdirectory
+                images_path = os.path.join(r, "images")
+                images_names = os.listdir(images_path)
+                full_image_paths = [os.path.join(images_path, img) for img in images_names]
+                df["full_image_path"] = full_image_paths
+                df["label"] = 0 # Dummy label
+            else:
+                # Load the dataset from the root directory
+                df = pd.read_csv(os.path.join(r, "labels.csv"))
+                # add column for full path to image: join root and image column
+                df["full_image_path"] = df["image"].apply(
+                    lambda x: os.path.join(r, "images", x)
+                )
+                # add column for same consistent label column
+                df["label"] = df[lc]
             # append to list
             all_dfs.append(df)
 
