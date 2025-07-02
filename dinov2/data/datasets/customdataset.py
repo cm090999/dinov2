@@ -17,12 +17,27 @@ class CustomVisionDataset(VisionDataset):
         transform: Optional[Callable] = None,
         target_transform: Optional[Callable] = None,
         preloading: bool = False,
+        cfg: Optional[Any] = None
     ) -> None:
         super().__init__(root, transforms, transform, target_transform)
 
         # Initialize the dataset with root directory and extra information
         self.root = root
         self.labelColumn = labelColumn
+        if cfg is None:
+            self.cfg = None
+            self.make_patches = False
+            self.patch_size = None
+            self.patch_resize = None
+            self.n_patches_per_axis = 1
+        else:
+            self.cfg = cfg
+            self.make_patches = cfg.images.make_patches
+            self.patch_size = cfg.images.patch_size
+            self.patch_resize = cfg.images.patch_resize
+            self.n_patches_per_axis = cfg.images.n_patches_per_axis
+
+
 
         # if joining multiple datasets, assume root and labelColumn as strings separated by ;
         all_roots = root.split(";")
@@ -74,12 +89,33 @@ class CustomVisionDataset(VisionDataset):
             # If preloading is disabled, we will load images on-the-fly
             self.images = None
 
+    def _get_patch(self, image: Any, rel_index: int) -> Any:
 
+        # Get image shape
+        image_width, image_height = image.size
+
+        stride_x = (image_width - int(self.patch_size * image_width)) // (self.n_patches_per_axis - 1)
+        stride_y = (image_height - int(self.patch_size * image_height)) // (self.n_patches_per_axis - 1)
+
+        # Get patch coordinates
+        x = rel_index % self.n_patches_per_axis
+        y = rel_index // self.n_patches_per_axis
+
+        # Get patch
+        patch = image.crop((x * stride_x, y * stride_y, x * stride_x + self.patch_size * image_width, y * stride_y + self.patch_size * image_height))
+
+        patch = patch.resize((self.patch_resize, self.patch_resize))
+
+        return patch
 
     def __getitem__(self, index):
+
+        img_index = index // (self.n_patches_per_axis ** 2) if self.make_patches else index
+        rel_index = index % (self.n_patches_per_axis ** 2) if self.make_patches else 0
+
         # Get the image path and label for the given index
-        image_path = self.image_paths[index]
-        label = self.labels[index]
+        image_path = self.image_paths[img_index]
+        label = self.labels[img_index]
 
         # Load the image from the path
         if self.preloading:
@@ -88,6 +124,9 @@ class CustomVisionDataset(VisionDataset):
         else:
             # Otherwise, load the image from disk
             image = PIL.Image.open(image_path).convert("RGB")
+
+        if self.make_patches:
+            image = self._get_patch(image, rel_index)
 
         if self.transforms is not None:
             image, label = self.transforms(image, label)

@@ -291,6 +291,7 @@ def do_train(cfg, model, resume=False, aim_run=None):
         dataset_str=cfg.train.dataset_path,
         transform=data_transform,
         target_transform=lambda _: (),
+        cfg=cfg,
     )
     # sampler_type = SamplerType.INFINITE
     sampler_type = SamplerType.SHARDED_INFINITE

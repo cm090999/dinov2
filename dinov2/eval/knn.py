@@ -576,8 +576,103 @@ def main(args):
     return 0
 
 
+
+def updated_eval(cfg, iteration, step):
+
+    ############  KNN EVAL  ############
+    from dinov2.eval.knn import eval_knn_multiple_splits
+    from dinov2.eval.setup import build_model_for_eval
+    from dinov2.data.transforms import make_classification_eval_transform
+    import json
+
+    from huggingface_hub import hf_hub_download
+
+    # Multiple eval datasets can be specified by separating eval_dataset and eval_dataset_name with >
+    dataset_list = cfg.evaluation.eval_dataset.split(">")
+    dataset_name_list = cfg.evaluation.eval_dataset_name.split(">")
+
+    for i, (dataset, dataset_name) in enumerate(zip(dataset_list, dataset_name_list)):
+
+        if cfg.student.pretrained_weights.split(":")[0] == "hf":
+            chkpt_path = hf_hub_download(
+                repo_id=cfg.student.pretrained_weights.split(":")[1],
+                filename=cfg.student.pretrained_weights.split(":")[2] 
+            )
+        else:
+            chkpt_path = cfg.student.pretrained_weights
+            
+
+        eval_model = build_model_for_eval(cfg, chkpt_path, enable_lora=True)
+        eval_transform = make_classification_eval_transform()
+
+        eval_dataset = make_dataset(
+            dataset_str=dataset,
+            transform=eval_transform,
+        )
+        
+        # Get number of splits from config, default to 1 for backward compatibility
+        n_splits = cfg.evaluation.n_splits
+
+        # Run eval with multiple splits (features extracted only once)
+        results_dict_knn = eval_knn_multiple_splits(
+            model=eval_model,
+            dataset=eval_dataset,
+            train_fraction=cfg.evaluation.train_fraction,
+            accuracy_averaging=AccuracyAveraging.MEAN_ACCURACY,
+            nb_knn=(5, 10, 20, 100, 200),
+            temperature=0.07,
+            batch_size=256,
+            num_workers=48,
+            gather_on_cpu=False,
+            n_splits=n_splits,
+        )
+        metrics_file_path = os.path.join(cfg.train.output_dir, "eval", f"eval_results_iteration_{iteration}_step_{step}_{dataset_name}.csv")
+        os.makedirs(os.path.dirname(metrics_file_path), exist_ok=True)
+        
+        import pandas as pd
+        knn_df = []
+        if distributed.is_main_process():
+            for neighbor in results_dict_knn.keys():
+                for metric_name in results_dict_knn[neighbor].keys():
+                    neighbor_name = neighbor[1] if isinstance(neighbor, tuple) else neighbor
+                    
+                    # Check if this is mean/std results (multiple splits) or single result
+                    if metric_name.endswith('_mean'):
+                        base_metric = metric_name.replace('_mean', '')
+                        std_metric = metric_name.replace('_mean', '_std')
+                        
+                        mean_value = results_dict_knn[neighbor][metric_name].item()
+                        std_value = results_dict_knn[neighbor][std_metric].item() if std_metric in results_dict_knn[neighbor] else 0.0
+                        
+                        log_name_mean = f"knn_neighbors_{neighbor_name}_{base_metric}_mean_{dataset_name}"
+                        log_name_std = f"knn_neighbors_{neighbor_name}_{base_metric}_std_{dataset_name}"
+                        
+                        knn_df.append({"neighbor": neighbor_name, "metric": f"{base_metric}_mean", "result_value": mean_value})
+                        knn_df.append({"neighbor": neighbor_name, "metric": f"{base_metric}_std", "result_value": std_value})
+                        
+
+        if distributed.is_main_process():
+            # Save results to CSV
+            knn_df = pd.DataFrame(knn_df)
+            knn_df.to_csv(metrics_file_path, index=False)
+            logger.info(f"Saved KNN results to {metrics_file_path}")
+
+    ############\ KNN EVAL \############
+
+
 if __name__ == "__main__":
+    # description = "DINOv2 k-NN evaluation"
+    # args_parser = get_args_parser(description=description)
+    # args = args_parser.parse_args()
+    # sys.exit(main(args))
+
+    from dinov2.utils.config import setup
+
     description = "DINOv2 k-NN evaluation"
-    args_parser = get_args_parser(description=description)
-    args = args_parser.parse_args()
-    sys.exit(main(args))
+    args = get_args_parser(add_help=True).parse_args()
+    # args.experiment_name = "dinov2_vitb"
+    # args.experiment_name = "dinoret"
+    # args.experiment_name = "loradinoret"
+    args.experiment_name = "bedinoret"
+    cfg = setup(args)
+    sys.exit(updated_eval(cfg, iteration=0, step=0))
