@@ -120,13 +120,12 @@ class DataAugmentationDINO(object):
         return output
 
 
-def debug_save_crops(output, image):
+def debug_save_crops(output, image, output_dir="debug_crops"):
     """Debug function to save crops to disk for visualization."""
     import os
     from PIL import Image
     import torch
 
-    output_dir = "debug_crops"
     os.makedirs(output_dir, exist_ok=True)
 
     for i, crop in enumerate(output["global_crops"]):
