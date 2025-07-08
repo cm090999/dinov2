@@ -63,7 +63,7 @@ class DataAugmentationDINO(object):
         color_jittering = transforms.Compose(
             [
                 transforms.RandomApply(
-                    [transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.05, hue=0.005)],
+                    [transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.05, hue=0.05)],
                     p=0.8,
                 ),
                 transforms.RandomGrayscale(p=0.2),
