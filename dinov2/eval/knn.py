@@ -507,6 +507,7 @@ def eval_knn_multiple_splits(
 
     # Perform multiple evaluations with different splits
     all_results = []
+    all_results_balanced = []
     dataset_size = len(dataset)
     train_size = int(dataset_size * train_fraction)
     
@@ -532,10 +533,53 @@ def eval_knn_multiple_splits(
             n_tries=n_tries,
         )
         all_results.append(split_results)
+
+    for split_idx in range(n_splits):
+        logger.info(f"Evaluating balanced split {split_idx + 1}/{n_splits}")
+
+        # Create a balanced dataset: ensure each label is represented equally by removing excess samples
+        unique_labels, counts = torch.unique(labels, return_counts=True)
+        min_count = counts.min().item()
+        balanced_indices = []
+        for label in unique_labels:
+            label_indices = (labels == label).nonzero(as_tuple=True)[0]
+            if len(label_indices) > min_count:
+                # Randomly select min_count indices for this label
+                selected_indices = torch.randperm(len(label_indices))[:min_count]
+                balanced_indices.append(label_indices[selected_indices])
+            else:
+                balanced_indices.append(label_indices)
+        balanced_indices = torch.cat(balanced_indices)
+
+        balanced_features = features[balanced_indices]
+        balanced_labels = labels[balanced_indices]
+        balanced_dataset_size = len(balanced_labels)
+        train_size_balanced = int(balanced_dataset_size * train_fraction)
+        
+        # Create balanced split with different seed for each split
+        torch.manual_seed(split_idx)
+        indices = torch.randperm(balanced_dataset_size)
+        train_indices = indices[:train_size_balanced]
+        val_indices = indices[train_size_balanced:]
+
+        # Evaluate with pre-extracted features
+        split_results_balanced = eval_knn_with_features(
+            features=balanced_features,
+            labels=balanced_labels,
+            train_indices=train_indices,
+            val_indices=val_indices,
+            accuracy_averaging=accuracy_averaging,
+            nb_knn=nb_knn,
+            temperature=temperature,
+            n_per_class_list=n_per_class_list,
+            n_tries=n_tries,
+        )
+        all_results_balanced.append(split_results_balanced)
     
     # If only one split, return results as-is for backward compatibility
     if n_splits == 1:
         return all_results[0]
+    
     
     # Calculate mean and std across splits
     final_results = {}
@@ -547,9 +591,11 @@ def eval_knn_multiple_splits(
         values_per_metric = {}
         for metric_name in sample_result[key].keys():
             values = torch.stack([result[key][metric_name] for result in all_results])
+            values_balanced = torch.stack([result[key][metric_name] for result in all_results_balanced])
             values_per_metric[f"{metric_name}_mean"] = torch.mean(values)
             values_per_metric[f"{metric_name}_std"] = torch.std(values)
-            
+            values_per_metric[f"{metric_name}_balanced_mean"] = torch.mean(values_balanced)
+            values_per_metric[f"{metric_name}_balanced_std"] = torch.std(values_balanced)
         final_results[key] = values_per_metric
     
     return final_results
