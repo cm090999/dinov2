@@ -59,23 +59,23 @@ ibot:
   head_nlayers: 3
   head_hidden_dim: 2048
 train:
-  batch_size_per_gpu: 144 # 48 * 12 = 576
-  accumulation_steps: 4
-  dataset_path: CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/ssl_datasets/filtered_dataset:labelColumn=
+  batch_size_per_gpu: 144
+  accumulation_steps: 1
+  dataset_path: CustomVisionDataset:root=/home/ubuntu/localstorage/dinov2/datasets/ssl_datasets/ssl_datasets/filtered_dataset:labelColumn=
   saveckp_freq: 20
   seed: 0
   num_workers: 48
-  OFFICIAL_EPOCH_LENGTH: 10
+  OFFICIAL_EPOCH_LENGTH: 100
   cache_dataset: true
-  centering: "sinkhorn_knopp" # or "sinkhorn_knopp" or "centering"
+  centering: sinkhorn_knopp
 student:
-  arch: vit_base # was vit_base, changed because loading function was modified, dinov2_vitb14
+  arch: vit_base
   patch_size: 14
   drop_path_rate: 0.4
   layerscale: 1.0e-05
-  drop_path_uniform: true # false # orignal: true
-  pretrained_weights: 'hf:cmerk/dinoret:bedinoret.pth' # 'https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vitb14_pretrain.pth' # 'hf:cmerk/dinoret:loradinoret.pth' 'hf:cmerk/dinoret:dinoret.pth' 'hf:cmerk/dinoret:bedinoret.pth'
-  ffn_layer: "mlp" #"swiglufused" or "mlp"
+  drop_path_uniform: true
+  pretrained_weights: https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vitb14_pretrain.pth
+  ffn_layer: mlp
   block_chunks: 0
   qkv_bias: true
   proj_bias: true
@@ -88,13 +88,13 @@ teacher:
   final_momentum_teacher: 1
   warmup_teacher_temp: 0.04
   teacher_temp: 0.07
-  warmup_teacher_temp_epochs: 30
+  warmup_teacher_temp_epochs: 10
 optim:
-  epochs: 50
+  epochs: 10
   weight_decay: 0.04
   weight_decay_end: 0.2
-  base_lr: 0.5e-4 # 2.0e-4  # learning rate for a batch size of 1024
-  lr: 0.  # will be set after applying scaling rule
+  base_lr: 0.0001
+  lr: 3.7500000000000003e-05
   warmup_epochs: 10
   min_lr: 1.0e-06
   clip_grad: 3.0
@@ -106,41 +106,49 @@ optim:
   adamw_beta2: 0.999
 crops:
   global_crops_scale:
-  - 0.32
+  - 0.5
   - 1.0
   local_crops_number: 8
   local_crops_scale:
-  - 0.05
-  - 0.32
+  - 0.2
+  - 0.5
   global_crops_size: 224
   local_crops_size: 98
 evaluation:
   eval_period_iterations: 50
-  # eval_dataset: ImageNet:split=VAL:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/imagenet1k:extra=/home/ubuntu/localstorage/eyebench/datasets/restructured/imagenet1k
-  
-  # eval_dataset: CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/rfmid:labelColumn=label2
-  # eval_dataset_name: rfmid
-  eval_dataset: CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/aptos2019-blindness-detection:labelColumn=label>CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/aireadi_highres_allcfp:labelColumn=cfp_grouped_label_study_group>ImageNet:split=VAL:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/imagenet1k:extra=/home/ubuntu/localstorage/eyebench/datasets/restructured/imagenet1k
-  eval_dataset_name: aptos>aireadi>imagenet
-  
-  # eval_dataset: CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/rfmid:labelColumn=label2>CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/brset_highres:labelColumn=hypertension>CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/aptos2019-blindness-detection:labelColumn=label>CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/aireadi_highres_allcfp:labelColumn=cfp_grouped_label_study_group>ImageNet:split=VAL:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/imagenet1k:extra=/home/ubuntu/localstorage/eyebench/datasets/restructured/imagenet1k
-  # eval_dataset_name: rfmid>brset>aptos>aireadi>imagenet
+  eval_dataset: CustomVisionDataset:root=/home/ubuntu/localstorage/eyebench/datasets/restructured/aptos2019-blindness-detection:labelColumn=label>ImageNet:split=VAL:root=/home/ubuntu/localstorage/dinov2/datasets/imagenet1k:extra=/home/ubuntu/localstorage/dinov2/datasets/imagenet1k
   train_fraction: 0.8
+  eval_dataset_name: aptos>imagenet
   n_splits: 5
 block_expansion:
-  enabled: True
-  expanded_blocks: [3,7,11]
-  path_dropout: 0.3
+  enabled: true
+  expanded_blocks:
+  - 3
+  - 7
+  - 11
+  path_dropout: 0.4
 lora_adaptation:
-  enabled: False
+  enabled: false
   rank: 8
   alpha: 16
-  target_blocks: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-  adapt_attention: True
-  adapt_mlp: True
+  target_blocks:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+  - 10
+  - 11
+  adapt_attention: true
+  adapt_mlp: true
   dropout: 0.1
 images:
-  make_patches: False
+  make_patches: true
   patch_size: 0.33
   patch_resize: 224
   n_patches_per_axis: 5
