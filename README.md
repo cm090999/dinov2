@@ -48,10 +48,11 @@ export LOCAL_WORLD_SIZE=1       # number of GPUs on this node (1)
 # Set up GH200
 python3.12 -m venv .venv
 source .venv/bin/activate
+pip install --upgrade pip
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 pip install ninja
-export TORCH_CUDA_ARCH_LIST="7.2;7.5;8.0;8.6;9.0+PTX"
-export MAX_JOBS=16
+export TORCH_CUDA_ARCH_LIST="9.0"
+export MAX_JOBS=8
 pip install -v --no-build-isolation -U git+https://github.com/facebookresearch/xformers.git@main#egg=xformers
 
 pip install omegaconf torchmetrics fvcore iopath aim pandas &&     pip install git+https://github.com/facebookincubator/submitit
