@@ -135,7 +135,7 @@ class CustomVisionDataset(VisionDataset):
     
     def __len__(self) -> int:
         # Return the number of samples in the dataset
-        return len(self.image_paths)
+        return len(self.image_paths) * (self.n_patches_per_axis ** 2) if self.make_patches else len(self.image_paths)
 
 
 
