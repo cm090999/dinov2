@@ -44,8 +44,16 @@ def add_block(backbone, position, drop_path_rate=0.0, init_value=0.0):
 
     # Initialize LayerScale parameters (ls1 and ls2) zero
     dim = added_block.ls1.gamma.size(0)  # Assuming ls1 and ls2 have the same dimension
-    added_block.ls1 = LayerScale(dim, init_value)
-    added_block.ls2 = LayerScale(dim, init_value)
+    # added_block.ls1 = LayerScale(dim, init_value)
+    # added_block.ls2 = LayerScale(dim, init_value)
+    added_block.attn.proj = nn.Linear(added_block.attn.proj.in_features, added_block.attn.proj.out_features, bias=True)
+    added_block.mlp.fc2 = nn.Linear(added_block.mlp.fc2.in_features, added_block.mlp.fc2.out_features, bias=True)
+    nn.init.zeros_(added_block.attn.proj.weight)
+    nn.init.zeros_(added_block.mlp.fc2.weight)
+    if added_block.attn.proj.bias is not None:
+        nn.init.zeros_(added_block.attn.proj.bias)
+    if added_block.mlp.fc2.bias is not None:
+        nn.init.zeros_(added_block.mlp.fc2.bias)
 
     # set block dropout rate
     added_block.sample_drop_ratio = drop_path_rate
